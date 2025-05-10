@@ -108,12 +108,12 @@ public abstract class ReactiveRepository<T> {
 
         String cypher = "MATCH (n:" + label + " {id: $id}) DELETE n";
         return Multi.createFrom().resource(
-                        () -> driver.session(ReactiveSession.class),
-                        session -> session.executeWrite(tx -> {
-                            var result = tx.run(cypher, Values.parameters("id", id));
-                            return Multi.createFrom().publisher(result)
-                                    .flatMap(ReactiveResult::consume).flatMap(ignore -> Multi.createFrom().item((Void) null));
-                        }))
+                () -> driver.session(ReactiveSession.class),
+                session -> session.executeWrite(tx -> {
+                    var result = tx.run(cypher, Values.parameters("id", id));
+                    return Multi.createFrom().publisher(result)
+                            .flatMap(ReactiveResult::consume).flatMap(ignore -> Multi.createFrom().item((Void) null));
+                }))
                 .withFinalizer(closeSession())
                 .toUni();
     }
@@ -189,13 +189,13 @@ public abstract class ReactiveRepository<T> {
 
     private Uni<Boolean> runBooleanQuery(String cypher, Map<String, Object> parameters) {
         return Multi.createFrom().resource(
-                        () -> driver.session(ReactiveSession.class),
-                        session -> session.executeRead(tx -> {
-                            var result = tx.run(cypher, Values.value(parameters));
-                            return Multi.createFrom().publisher(result)
-                                    .flatMap(ReactiveResult::records)
-                                    .map(record -> record.get("exists").asBoolean());
-                        }))
+                () -> driver.session(ReactiveSession.class),
+                session -> session.executeRead(tx -> {
+                    var result = tx.run(cypher, Values.value(parameters));
+                    return Multi.createFrom().publisher(result)
+                            .flatMap(ReactiveResult::records)
+                            .map(record -> record.get("exists").asBoolean());
+                }))
                 .withFinalizer(closeSession())
                 .toUni();
     }
