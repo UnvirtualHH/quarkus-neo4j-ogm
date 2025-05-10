@@ -134,6 +134,25 @@ public abstract class ReactiveRepository<T> {
                 .toUni();
     }
 
+    public Uni<Boolean> exists(T entity) {
+        Object id = entityMapper.getNodeId(entity);
+        if (id == null) {
+            return Uni.createFrom().failure(new IllegalArgumentException("Entity ID cannot be null"));
+        }
+
+        String cypher = "MATCH (n:" + label + " {id: $id}) RETURN count(n) > 0 AS exists";
+        return runBooleanQuery(cypher, Map.of("id", id));
+    }
+
+    public Uni<Boolean> existsById(Object id) {
+        if (id == null) {
+            return Uni.createFrom().failure(new IllegalArgumentException("ID cannot be null"));
+        }
+
+        String cypher = "MATCH (n:" + label + " {id: $id}) RETURN count(n) > 0 AS exists";
+        return runBooleanQuery(cypher, Map.of("id", id));
+    }
+
     public Multi<T> query(String cypher) {
         return runQueryAndMap(cypher, Map.of());
     }
@@ -167,4 +186,18 @@ public abstract class ReactiveRepository<T> {
                 .toUni()
                 .onItem().ifNull().failWith(() -> new RuntimeException("No result found"));
     }
+
+    private Uni<Boolean> runBooleanQuery(String cypher, Map<String, Object> parameters) {
+        return Multi.createFrom().resource(
+                        () -> driver.session(ReactiveSession.class),
+                        session -> session.executeRead(tx -> {
+                            var result = tx.run(cypher, Values.value(parameters));
+                            return Multi.createFrom().publisher(result)
+                                    .flatMap(ReactiveResult::records)
+                                    .map(record -> record.get("exists").asBoolean());
+                        }))
+                .withFinalizer(closeSession())
+                .toUni();
+    }
+
 }
