@@ -82,6 +82,13 @@ public abstract class Repository<T> {
         }
     }
 
+    public void delete(T entity) {
+        try (Session session = driver.session()) {
+            String cypher = "MATCH (n:" + label + " {id: $id}) DELETE n";
+            session.run(cypher, Values.parameters("id", entityMapper.getNodeId(entity)));
+        }
+    }
+
     public void deleteById(Object id) {
         if (id == null)
             throw new IllegalArgumentException("ID cannot be null");

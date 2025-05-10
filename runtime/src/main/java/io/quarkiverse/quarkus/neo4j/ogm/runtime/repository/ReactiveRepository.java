@@ -100,6 +100,19 @@ public abstract class ReactiveRepository<T> {
         return runQuerySingleAndMap(cypher, params);
     }
 
+    public Uni<Void> delete(T entity) {
+        String cypher = "MATCH (n:" + label + " {id: $id}) DELETE n";
+        return Multi.createFrom().resource(
+                        () -> driver.session(ReactiveSession.class),
+                        session -> session.executeWrite(tx -> {
+                            var result = tx.run(cypher, Values.parameters("id", entityMapper.getNodeId(entity)));
+                            return Multi.createFrom().publisher(result)
+                                    .flatMap(ReactiveResult::consume).flatMap(ignore -> Multi.createFrom().item((Void) null));
+                        }))
+                .withFinalizer(closeSession())
+                .toUni();
+    }
+
     public Uni<Void> deleteById(Object id) {
         if (id == null) {
             return Uni.createFrom().failure(new IllegalArgumentException("ID cannot be null"));
