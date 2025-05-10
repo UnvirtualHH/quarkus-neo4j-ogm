@@ -110,8 +110,7 @@ public abstract class ReactiveRepository<T> {
                 session -> session.executeWrite(tx -> {
                     var result = tx.run(cypher, Values.parameters("id", id));
                     return Multi.createFrom().publisher(result)
-                            .flatMap(ReactiveResult::consume)
-                            .map(ignore -> (Void) null);
+                            .flatMap(ReactiveResult::consume).flatMap(ignore -> Multi.createFrom().item((Void) null));
                 }))
                 .withFinalizer(closeSession())
                 .toUni();
