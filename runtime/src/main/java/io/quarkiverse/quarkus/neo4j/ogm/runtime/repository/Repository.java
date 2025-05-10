@@ -83,9 +83,13 @@ public abstract class Repository<T> {
     }
 
     public void delete(T entity) {
+        Object id = entityMapper.getNodeId(entity);
+        if (id == null)
+            throw new IllegalArgumentException("Entity ID cannot be null");
+
         try (Session session = driver.session()) {
             String cypher = "MATCH (n:" + label + " {id: $id}) DELETE n";
-            session.run(cypher, Values.parameters("id", entityMapper.getNodeId(entity)));
+            session.run(cypher, Values.parameters("id", id));
         }
     }
 
@@ -96,6 +100,18 @@ public abstract class Repository<T> {
         try (Session session = driver.session()) {
             String cypher = "MATCH (n:" + label + " {id: $id}) DELETE n";
             session.run(cypher, Values.parameters("id", id));
+        }
+    }
+
+    public boolean exists(T entity) {
+        Object id = entityMapper.getNodeId(entity);
+        if (id == null)
+            throw new IllegalArgumentException("Entity ID cannot be null");
+
+        try (Session session = driver.session()) {
+            String cypher = "MATCH (n:" + label + " {id: $id}) RETURN count(n) > 0 AS exists";
+            return session.run(cypher, Values.parameters("id", id))
+                    .single().get("exists").asBoolean();
         }
     }
 
