@@ -25,7 +25,9 @@ public class TypeHandlerRegistry {
             new UUIDTypeHandler(),
             new OffsetDateTimeTypeHandler(),
             new GeoPointTypeHandler(),
-            new PointTypeHandler());
+            new PointTypeHandler(),
+            new SetTypeHandler(),
+            new ByteArrayTypeHandler());
 
     public static Optional<TypeHandler> findHandler(VariableElement field) {
         return handlers.stream().filter(h -> h.supports(field)).findFirst();

@@ -4,8 +4,6 @@ import java.io.IOException;
 
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.*;
-import javax.lang.model.type.MirroredTypeException;
-import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
 import javax.tools.Diagnostic;
 
@@ -13,9 +11,9 @@ import jakarta.enterprise.context.ApplicationScoped;
 
 import com.palantir.javapoet.*;
 
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Convert;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Direction;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil;
 
 public class MapperGenerator {
 
@@ -59,11 +57,7 @@ public class MapperGenerator {
                 .addStatement("$T nodeValue = record.get(alias)", ClassName.get("org.neo4j.driver", "Value"));
 
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
-            Property prop = field.getAnnotation(Property.class);
-            Enumerated enumerated = field.getAnnotation(Enumerated.class);
-            NodeId nodeId = field.getAnnotation(NodeId.class);
-            Convert convert = field.getAnnotation(Convert.class);
-            if (prop == null && enumerated == null && nodeId == null && convert == null)
+            if (TypeHandlerRegistry.findHandler(field).isEmpty())
                 continue;
 
             generateMapStatement(field, builder, env);
@@ -79,22 +73,6 @@ public class MapperGenerator {
         });
     }
 
-    private String resolveSetterName(VariableElement field) {
-        return "set" + capitalize(field.getSimpleName().toString());
-    }
-
-    private String resolveGetterName(VariableElement field) {
-        String type = field.asType().toString();
-        String baseName = capitalize(field.getSimpleName().toString());
-        return ("boolean".equals(type)) ? "is" + baseName : "get" + baseName;
-    }
-
-    private String capitalize(String input) {
-        if (input == null || input.isEmpty())
-            return input;
-        return input.substring(0, 1).toUpperCase() + input.substring(1);
-    }
-
     private MethodSpec generateToDbMethod(TypeElement entityType, ProcessingEnvironment env) {
         MethodSpec.Builder builder = MethodSpec.methodBuilder("toDb")
                 .addModifiers(Modifier.PUBLIC)
@@ -105,11 +83,7 @@ public class MapperGenerator {
                         ClassName.get("java.util", "HashMap"));
 
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
-            Property prop = field.getAnnotation(Property.class);
-            Enumerated enumerated = field.getAnnotation(Enumerated.class);
-            NodeId nodeId = field.getAnnotation(NodeId.class);
-            Convert convert = field.getAnnotation(Convert.class);
-            if (prop == null && enumerated == null && nodeId == null && convert == null)
+            if (TypeHandlerRegistry.findHandler(field).isEmpty())
                 continue;
 
             generateToDbStatement(field, builder, env);
@@ -120,7 +94,7 @@ public class MapperGenerator {
             if (relationship != null) {
                 String relationshipType = relationship.type();
                 Direction direction = relationship.direction();
-                String getterName = resolveGetterName(field);
+                String getterName = MapperUtil.resolveGetterName(field);
                 String cypherDirection = (direction == Direction.OUTGOING) ? "->" : "<-";
 
                 builder.addStatement("if (entity.$L() != null) { params.put($S, $S); }",
@@ -143,8 +117,7 @@ public class MapperGenerator {
     private MethodSpec generateGetNodeIdMethod(TypeElement entityType) {
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             if (field.getAnnotation(NodeId.class) != null) {
-                String fieldName = field.getSimpleName().toString();
-                String getterName = "get" + capitalize(fieldName);
+                String getterName = MapperUtil.resolveGetterName(field);
                 return MethodSpec.methodBuilder("getNodeId")
                         .addAnnotation(Override.class)
                         .addModifiers(Modifier.PUBLIC)

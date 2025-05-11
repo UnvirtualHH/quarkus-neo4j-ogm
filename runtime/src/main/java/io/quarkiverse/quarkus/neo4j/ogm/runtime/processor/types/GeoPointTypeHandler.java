@@ -1,11 +1,13 @@
 package io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.types;
 
-import com.palantir.javapoet.ClassName;
-import com.palantir.javapoet.CodeBlock;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.TypeHandler;
+import static io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil.*;
 
 import javax.lang.model.element.VariableElement;
-import static io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil.*;
+
+import com.palantir.javapoet.ClassName;
+import com.palantir.javapoet.CodeBlock;
+
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.TypeHandler;
 
 public class GeoPointTypeHandler implements TypeHandler {
     @Override
@@ -16,14 +18,14 @@ public class GeoPointTypeHandler implements TypeHandler {
     @Override
     public CodeBlock generateSetterCode(VariableElement field, String targetVar, String valueSource) {
         return CodeBlock.builder()
-            .addStatement("$T point = $L.get($S).asPoint()",
-                ClassName.get("org.neo4j.driver.types", "Point"),
-                valueSource,
-                getPropertyName(field))
-            .addStatement("$L.$L(new io.quarkiverse.quarkus.neo4j.ogm.runtime.model.GeoPoint(point.y(), point.x()))",
-                targetVar,
-                resolveSetterName(field))
-            .build();
+                .addStatement("$T point = $L.get($S).asPoint()",
+                        ClassName.get("org.neo4j.driver.types", "Point"),
+                        valueSource,
+                        getPropertyName(field))
+                .addStatement("$L.$L(new io.quarkiverse.quarkus.neo4j.ogm.runtime.model.GeoPoint(point.y(), point.x()))",
+                        targetVar,
+                        resolveSetterName(field))
+                .build();
     }
 
     @Override
@@ -31,11 +33,12 @@ public class GeoPointTypeHandler implements TypeHandler {
         String getter = resolveGetterName(field);
         String property = getPropertyName(field);
         return CodeBlock.builder()
-            .addStatement("if ($L.$L() != null) {", entityVar, getter)
-            .addStatement("  var geo = $L.$L();", entityVar, getter)
-            .addStatement("  var point = org.neo4j.driver.internal.InternalPoint.of(4326, geo.longitude(), geo.latitude());")
-            .addStatement("  params.put($S, point);", property)
-            .addStatement("}")
-            .build();
+                .addStatement("if ($L.$L() != null) {", entityVar, getter)
+                .addStatement("  var geo = $L.$L();", entityVar, getter)
+                .addStatement(
+                        "  var point = org.neo4j.driver.internal.InternalPoint.of(4326, geo.longitude(), geo.latitude());")
+                .addStatement("  params.put($S, point);", property)
+                .addStatement("}")
+                .build();
     }
 }
