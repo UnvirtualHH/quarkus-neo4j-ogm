@@ -11,15 +11,22 @@ import jakarta.enterprise.context.ApplicationScoped;
 
 import com.palantir.javapoet.*;
 
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.config.FieldMappingStrategy;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Convert;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Direction;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil;
 
 public class MapperGenerator {
 
+    private FieldMappingStrategy strategy;
+
+    public MapperGenerator(FieldMappingStrategy strategy) {
+        this.strategy = strategy;
+    }
+
     public void generateMapper(String packageName, TypeElement entityType, String mapperClassName,
             ProcessingEnvironment processingEnv) {
-
         MethodSpec mapMethod = generateMapMethod(entityType, processingEnv);
         MethodSpec toDbMethod = generateToDbMethod(entityType, processingEnv);
         MethodSpec getNodeIdMethod = generateGetNodeIdMethod(entityType);
@@ -57,7 +64,7 @@ public class MapperGenerator {
                 .addStatement("$T nodeValue = record.get(alias)", ClassName.get("org.neo4j.driver", "Value"));
 
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
-            if (TypeHandlerRegistry.findHandler(field).isEmpty())
+            if (!shouldIncludeField(field))
                 continue;
 
             generateMapStatement(field, builder, env);
@@ -83,7 +90,7 @@ public class MapperGenerator {
                         ClassName.get("java.util", "HashMap"));
 
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
-            if (TypeHandlerRegistry.findHandler(field).isEmpty())
+            if (!shouldIncludeField(field))
                 continue;
 
             generateToDbStatement(field, builder, env);
@@ -128,6 +135,18 @@ public class MapperGenerator {
             }
         }
         throw new IllegalStateException("No field annotated with @NodeId found in " + entityType.getSimpleName());
+    }
+
+    private boolean shouldIncludeField(VariableElement field) {
+        if (strategy == FieldMappingStrategy.EXPLICIT) {
+            return field.getAnnotation(Property.class) != null
+                    || field.getAnnotation(NodeId.class) != null
+                    || field.getAnnotation(Convert.class) != null
+                    || field.getAnnotation(Enumerated.class) != null;
+        } else {
+            return field.getAnnotation(Transient.class) == null
+                    && TypeHandlerRegistry.findHandler(field).isPresent();
+        }
     }
 
 }

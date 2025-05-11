@@ -19,7 +19,7 @@ import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.NodeEntity;
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public class EntityMapperProcessor extends AbstractProcessor {
 
-    private final MapperGenerator mapperGenerator = new MapperGenerator();
+    private MapperGenerator mapperGenerator;
     private final RepositoryGenerator repositoryGenerator = new RepositoryGenerator();
     private final ReactiveRepositoryGenerator reactiveRepositoryGenerator = new ReactiveRepositoryGenerator();
 
@@ -49,6 +49,9 @@ public class EntityMapperProcessor extends AbstractProcessor {
             // Mapper
             String mapperClassName = entityName + "Mapper";
             String mapperFQN = packageName + "." + mapperClassName;
+
+            mapperGenerator = new MapperGenerator(nodeEntity.fieldMappingStrategy());
+
             if (generatedClasses.add(mapperFQN)) {
                 mapperGenerator.generateMapper(packageName, entityType, mapperClassName, processingEnv);
             }
