@@ -4,6 +4,8 @@ import java.io.IOException;
 
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.*;
+import javax.lang.model.type.MirroredTypeException;
+import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
 import javax.tools.Diagnostic;
 
@@ -11,6 +13,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 
 import com.palantir.javapoet.*;
 
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Convert;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Direction;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.EnumType;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
@@ -60,7 +63,8 @@ public class MapperGenerator {
             Property prop = field.getAnnotation(Property.class);
             Enumerated enumerated = field.getAnnotation(Enumerated.class);
             NodeId nodeId = field.getAnnotation(NodeId.class);
-            if (prop == null && enumerated == null && nodeId == null)
+            Convert convert = field.getAnnotation(Convert.class);
+            if (prop == null && enumerated == null && nodeId == null && convert == null)
                 continue;
 
             generateMapStatement(field, builder, env);
@@ -72,11 +76,16 @@ public class MapperGenerator {
 
     private void generateMapStatement(VariableElement field, MethodSpec.Builder builder, ProcessingEnvironment env) {
         String fieldName = field.getSimpleName().toString();
-        String setterName = "set" + capitalize(fieldName);
+        String setterName = resolveSetterName(field);
         Property prop = field.getAnnotation(Property.class);
         Enumerated enumerated = field.getAnnotation(Enumerated.class);
         NodeId nodeId = field.getAnnotation(NodeId.class);
-        String propertyName = (nodeId != null) ? fieldName : (prop != null && !prop.name().isEmpty()) ? prop.name() : fieldName;
+        Convert convert = field.getAnnotation(Convert.class);
+
+        String propertyName = (nodeId != null)
+                ? fieldName
+                : (prop != null && !prop.name().isEmpty()) ? prop.name() : fieldName;
+
         String fieldType = field.asType().toString();
 
         if (enumerated != null) {
@@ -91,6 +100,24 @@ public class MapperGenerator {
                 }
                 return;
             }
+        }
+
+        if (convert != null) {
+            TypeMirror converterType;
+            try {
+                convert.value();
+                throw new IllegalStateException("Expected MirroredTypeException");
+            } catch (MirroredTypeException mte) {
+                converterType = mte.getTypeMirror();
+            }
+
+            TypeName converterClass = TypeName.get(converterType);
+            String converterVar = field.getSimpleName().toString() + "Converter";
+
+            builder.addStatement("$T $L = new $T()", converterClass, converterVar, converterClass);
+            builder.addStatement("instance.$L($L.toEntityAttribute(nodeValue.get($S).asString()))",
+                    resolveSetterName(field), converterVar, propertyName);
+            return;
         }
 
         switch (fieldType) {
@@ -123,19 +150,37 @@ public class MapperGenerator {
                 builder.addStatement("instance.$L((short) nodeValue.get($S).asInt())", setterName, propertyName);
             case "char", "java.lang.Character" ->
                 builder.addStatement("instance.$L(nodeValue.get($S).asString().charAt(0))", setterName, propertyName);
-            case "java.util.List" -> builder.addStatement("instance.$L(nodeValue.get($S).asList())", setterName, propertyName);
-            case "java.util.Map" -> builder.addStatement("instance.$L(nodeValue.get($S).asMap())", setterName, propertyName);
+            case "java.util.List" ->
+                builder.addStatement("instance.$L(nodeValue.get($S).asList())", setterName, propertyName);
+            case "java.util.Map" ->
+                builder.addStatement("instance.$L(nodeValue.get($S).asMap())", setterName, propertyName);
             case "org.neo4j.driver.types.Point" ->
                 builder.addStatement("instance.$L(nodeValue.get($S).asPoint())", setterName, propertyName);
-            case "io.quarkiverse.quarkus.neo4j.ogm.runtime.model.GeoPoint" -> builder
-                    .addStatement("$T point = nodeValue.get($S).asPoint()",
-                            ClassName.get("org.neo4j.driver.types", "Point"), propertyName)
-                    .addStatement(
-                            "instance.$L(new io.quarkiverse.quarkus.neo4j.ogm.runtime.model.GeoPoint(point.y(), point.x()))",
-                            setterName);
+            case "io.quarkiverse.quarkus.neo4j.ogm.runtime.model.GeoPoint" ->
+                builder.addStatement("$T point = nodeValue.get($S).asPoint()",
+                        ClassName.get("org.neo4j.driver.types", "Point"), propertyName)
+                        .addStatement(
+                                "instance.$L(new io.quarkiverse.quarkus.neo4j.ogm.runtime.model.GeoPoint(point.y(), point.x()))",
+                                setterName);
             default ->
                 builder.addStatement("instance.$L(($L) nodeValue.get($S).asObject())", setterName, fieldType, propertyName);
         }
+    }
+
+    private String resolveSetterName(VariableElement field) {
+        return "set" + capitalize(field.getSimpleName().toString());
+    }
+
+    private String resolveGetterName(VariableElement field) {
+        String type = field.asType().toString();
+        String baseName = capitalize(field.getSimpleName().toString());
+        return ("boolean".equals(type)) ? "is" + baseName : "get" + baseName;
+    }
+
+    private String capitalize(String input) {
+        if (input == null || input.isEmpty())
+            return input;
+        return input.substring(0, 1).toUpperCase() + input.substring(1);
     }
 
     private MethodSpec generateToDbMethod(TypeElement entityType, ProcessingEnvironment env) {
@@ -151,7 +196,8 @@ public class MapperGenerator {
             Property prop = field.getAnnotation(Property.class);
             Enumerated enumerated = field.getAnnotation(Enumerated.class);
             NodeId nodeId = field.getAnnotation(NodeId.class);
-            if (prop == null && enumerated == null && nodeId == null)
+            Convert convert = field.getAnnotation(Convert.class);
+            if (prop == null && enumerated == null && nodeId == null && convert == null)
                 continue;
 
             generateToDbStatement(field, builder, env);
@@ -160,10 +206,9 @@ public class MapperGenerator {
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             Relationship relationship = field.getAnnotation(Relationship.class);
             if (relationship != null) {
-                String fieldName = field.getSimpleName().toString();
                 String relationshipType = relationship.type();
                 Direction direction = relationship.direction();
-                String getterName = "get" + capitalize(fieldName);
+                String getterName = resolveGetterName(field);
                 String cypherDirection = (direction == Direction.OUTGOING) ? "->" : "<-";
 
                 builder.addStatement("if (entity.$L() != null) { params.put($S, $S); }",
@@ -182,17 +227,34 @@ public class MapperGenerator {
         Property prop = field.getAnnotation(Property.class);
         Enumerated enumerated = field.getAnnotation(Enumerated.class);
         NodeId nodeId = field.getAnnotation(NodeId.class);
+        Convert convert = field.getAnnotation(Convert.class);
         String propertyName = (nodeId != null) ? fieldName : (prop != null && !prop.name().isEmpty()) ? prop.name() : fieldName;
 
         String fieldType = field.asType().toString();
-        String getterName = (fieldType.equals("boolean") || fieldType.equals("java.lang.Boolean"))
-                ? "is" + capitalize(fieldName)
-                : "get" + capitalize(fieldName);
+        String getterName = resolveGetterName(field);
 
         if (enumerated != null) {
             String method = enumerated.value() == EnumType.ORDINAL ? "ordinal" : "name";
             builder.addStatement("if (entity.$L() != null) params.put($S, entity.$L().$L())",
                     getterName, propertyName, getterName, method);
+            return;
+        }
+
+        if (convert != null) {
+
+            TypeMirror converterType;
+            try {
+                convert.value();
+                throw new IllegalStateException("Expected MirroredTypeException");
+            } catch (MirroredTypeException mte) {
+                converterType = mte.getTypeMirror();
+            }
+
+            TypeName converterClass = TypeName.get(converterType);
+            String converterVar = field.getSimpleName().toString() + "Converter";
+
+            builder.addStatement("$T $L = new $T()", converterClass, converterVar, converterClass);
+            builder.addStatement("params.put($S, $L.toGraphProperty(entity.$L()))", propertyName, converterVar, getterName);
             return;
         }
 
@@ -228,10 +290,6 @@ public class MapperGenerator {
             }
         }
         throw new IllegalStateException("No field annotated with @NodeId found in " + entityType.getSimpleName());
-    }
-
-    private String capitalize(String name) {
-        return name.substring(0, 1).toUpperCase() + name.substring(1);
     }
 
 }
