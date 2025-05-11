@@ -15,7 +15,6 @@ import com.palantir.javapoet.*;
 
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Convert;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Direction;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.EnumType;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
 
 public class MapperGenerator {
@@ -75,96 +74,9 @@ public class MapperGenerator {
     }
 
     private void generateMapStatement(VariableElement field, MethodSpec.Builder builder, ProcessingEnvironment env) {
-        String fieldName = field.getSimpleName().toString();
-        String setterName = resolveSetterName(field);
-        Property prop = field.getAnnotation(Property.class);
-        Enumerated enumerated = field.getAnnotation(Enumerated.class);
-        NodeId nodeId = field.getAnnotation(NodeId.class);
-        Convert convert = field.getAnnotation(Convert.class);
-
-        String propertyName = (nodeId != null)
-                ? fieldName
-                : (prop != null && !prop.name().isEmpty()) ? prop.name() : fieldName;
-
-        String fieldType = field.asType().toString();
-
-        if (enumerated != null) {
-            Element typeElem = env.getTypeUtils().asElement(field.asType());
-            if (typeElem instanceof TypeElement te) {
-                if (enumerated.value() == EnumType.ORDINAL) {
-                    builder.addStatement("instance.$L($T.values()[nodeValue.get($S).asInt()])",
-                            setterName, ClassName.get(te), propertyName);
-                } else {
-                    builder.addStatement("instance.$L($T.valueOf(nodeValue.get($S).asString()))",
-                            setterName, ClassName.get(te), propertyName);
-                }
-                return;
-            }
-        }
-
-        if (convert != null) {
-            TypeMirror converterType;
-            try {
-                convert.value();
-                throw new IllegalStateException("Expected MirroredTypeException");
-            } catch (MirroredTypeException mte) {
-                converterType = mte.getTypeMirror();
-            }
-
-            TypeName converterClass = TypeName.get(converterType);
-            String converterVar = field.getSimpleName().toString() + "Converter";
-
-            builder.addStatement("$T $L = new $T()", converterClass, converterVar, converterClass);
-            builder.addStatement("instance.$L($L.toEntityAttribute(nodeValue.get($S).asString()))",
-                    resolveSetterName(field), converterVar, propertyName);
-            return;
-        }
-
-        switch (fieldType) {
-            case "java.lang.String" ->
-                builder.addStatement("instance.$L(nodeValue.get($S).asString())", setterName, propertyName);
-            case "java.lang.Integer", "int" ->
-                builder.addStatement("instance.$L(nodeValue.get($S).asInt())", setterName, propertyName);
-            case "java.lang.Long", "long" ->
-                builder.addStatement("instance.$L(nodeValue.get($S).asLong())", setterName, propertyName);
-            case "java.lang.Boolean", "boolean" ->
-                builder.addStatement("instance.$L(nodeValue.get($S).asBoolean())", setterName, propertyName);
-            case "java.lang.Double", "double" ->
-                builder.addStatement("instance.$L(nodeValue.get($S).asDouble())", setterName, propertyName);
-            case "java.lang.Float", "float" ->
-                builder.addStatement("instance.$L((float) nodeValue.get($S).asDouble())", setterName, propertyName);
-            case "java.time.Instant" ->
-                builder.addStatement("instance.$L(nodeValue.get($S).asZonedDateTime().toInstant())", setterName, propertyName);
-            case "java.time.LocalDate" ->
-                builder.addStatement("instance.$L(nodeValue.get($S).asLocalDate())", setterName, propertyName);
-            case "java.time.LocalDateTime" ->
-                builder.addStatement("instance.$L(nodeValue.get($S).asLocalDateTime())", setterName, propertyName);
-            case "java.time.OffsetDateTime" ->
-                builder.addStatement("instance.$L(nodeValue.get($S).asOffsetDateTime())", setterName, propertyName);
-            case "java.util.UUID" ->
-                builder.addStatement("instance.$L($T.fromString(nodeValue.get($S).asString()))", setterName,
-                        ClassName.get("java.util", "UUID"), propertyName);
-            case "byte", "java.lang.Byte" ->
-                builder.addStatement("instance.$L((byte) nodeValue.get($S).asInt())", setterName, propertyName);
-            case "short", "java.lang.Short" ->
-                builder.addStatement("instance.$L((short) nodeValue.get($S).asInt())", setterName, propertyName);
-            case "char", "java.lang.Character" ->
-                builder.addStatement("instance.$L(nodeValue.get($S).asString().charAt(0))", setterName, propertyName);
-            case "java.util.List" ->
-                builder.addStatement("instance.$L(nodeValue.get($S).asList())", setterName, propertyName);
-            case "java.util.Map" ->
-                builder.addStatement("instance.$L(nodeValue.get($S).asMap())", setterName, propertyName);
-            case "org.neo4j.driver.types.Point" ->
-                builder.addStatement("instance.$L(nodeValue.get($S).asPoint())", setterName, propertyName);
-            case "io.quarkiverse.quarkus.neo4j.ogm.runtime.model.GeoPoint" ->
-                builder.addStatement("$T point = nodeValue.get($S).asPoint()",
-                        ClassName.get("org.neo4j.driver.types", "Point"), propertyName)
-                        .addStatement(
-                                "instance.$L(new io.quarkiverse.quarkus.neo4j.ogm.runtime.model.GeoPoint(point.y(), point.x()))",
-                                setterName);
-            default ->
-                builder.addStatement("instance.$L(($L) nodeValue.get($S).asObject())", setterName, fieldType, propertyName);
-        }
+        TypeHandlerRegistry.findHandler(field).ifPresent(handler -> {
+            builder.addCode(handler.generateSetterCode(field, "instance", "nodeValue"));
+        });
     }
 
     private String resolveSetterName(VariableElement field) {
@@ -223,56 +135,9 @@ public class MapperGenerator {
     }
 
     private void generateToDbStatement(VariableElement field, MethodSpec.Builder builder, ProcessingEnvironment env) {
-        String fieldName = field.getSimpleName().toString();
-        Property prop = field.getAnnotation(Property.class);
-        Enumerated enumerated = field.getAnnotation(Enumerated.class);
-        NodeId nodeId = field.getAnnotation(NodeId.class);
-        Convert convert = field.getAnnotation(Convert.class);
-        String propertyName = (nodeId != null) ? fieldName : (prop != null && !prop.name().isEmpty()) ? prop.name() : fieldName;
-
-        String fieldType = field.asType().toString();
-        String getterName = resolveGetterName(field);
-
-        if (enumerated != null) {
-            String method = enumerated.value() == EnumType.ORDINAL ? "ordinal" : "name";
-            builder.addStatement("if (entity.$L() != null) params.put($S, entity.$L().$L())",
-                    getterName, propertyName, getterName, method);
-            return;
-        }
-
-        if (convert != null) {
-
-            TypeMirror converterType;
-            try {
-                convert.value();
-                throw new IllegalStateException("Expected MirroredTypeException");
-            } catch (MirroredTypeException mte) {
-                converterType = mte.getTypeMirror();
-            }
-
-            TypeName converterClass = TypeName.get(converterType);
-            String converterVar = field.getSimpleName().toString() + "Converter";
-
-            builder.addStatement("$T $L = new $T()", converterClass, converterVar, converterClass);
-            builder.addStatement("params.put($S, $L.toGraphProperty(entity.$L()))", propertyName, converterVar, getterName);
-            return;
-        }
-
-        if (field.asType().getKind().isPrimitive()) {
-            if (fieldType.equals("int") || fieldType.equals("java.lang.Integer")) {
-                builder.addStatement("if (entity.$L() != 0) params.put($S, entity.$L())", getterName, propertyName, getterName);
-            } else {
-                builder.addStatement("params.put($S, entity.$L())", propertyName, getterName);
-            }
-        } else {
-            if (fieldType.equals("java.util.UUID")) {
-                builder.addStatement("if (entity.$L() != null) params.put($S, entity.$L().toString())", getterName,
-                        propertyName, getterName);
-            } else {
-                builder.addStatement("if (entity.$L() != null) params.put($S, entity.$L())",
-                        getterName, propertyName, getterName);
-            }
-        }
+        TypeHandlerRegistry.findHandler(field).ifPresent(handler -> {
+            builder.addCode(handler.generateToDbCode(field, "entity"));
+        });
     }
 
     private MethodSpec generateGetNodeIdMethod(TypeElement entityType) {
