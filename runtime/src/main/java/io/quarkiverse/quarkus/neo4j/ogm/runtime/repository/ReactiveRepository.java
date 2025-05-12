@@ -84,6 +84,19 @@ public abstract class ReactiveRepository<T> {
                 .map(records -> entityMapper.map((Record) records.get(0), "node"));
     }
 
+    public Uni<Void> execute(String cypher, Map<String, Object> parameters) {
+        return Multi.createFrom().resource(
+                () -> driver.session(ReactiveSession.class),
+                session -> session.executeWrite(tx -> {
+                    var result = tx.run(cypher, Values.value(parameters));
+                    return Multi.createFrom().publisher(result)
+                            .flatMap(ReactiveResult::consume)
+                            .flatMap(ignore -> Multi.createFrom().item((Void) null));
+                }))
+                .withFinalizer(this::sessionFinalizer)
+                .toUni();
+    }
+
     public Uni<T> update(T entity) {
         String cypher = "MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n AS node";
         Map<String, Object> params = Map.of(
@@ -169,6 +182,10 @@ public abstract class ReactiveRepository<T> {
         return runQuerySingleAndMap(cypher, parameters);
     }
 
+    public <R> Uni<R> queryScalar(String cypher, Map<String, Object> params, Function<Record, R> mapper) {
+        return runScalarQuery(cypher, params, mapper);
+    }
+
     private Multi<T> runQueryAndMap(String cypher, Map<String, Object> parameters) {
         return Multi.createFrom().resource(
                 () -> driver.session(ReactiveSession.class),
@@ -198,6 +215,20 @@ public abstract class ReactiveRepository<T> {
                 }))
                 .withFinalizer(closeSession())
                 .toUni();
+    }
+
+    private <R> Uni<R> runScalarQuery(String cypher, Map<String, Object> parameters, Function<Record, R> mapper) {
+        return Multi.createFrom().resource(
+                () -> driver.session(ReactiveSession.class),
+                session -> session.executeRead(tx -> {
+                    var result = tx.run(cypher, Values.value(parameters));
+                    return Multi.createFrom().publisher(result)
+                            .flatMap(ReactiveResult::records)
+                            .map(mapper);
+                }))
+                .withFinalizer(closeSession())
+                .toUni()
+                .onItem().ifNull().failWith(() -> new RuntimeException("Scalar query returned no result"));
     }
 
 }

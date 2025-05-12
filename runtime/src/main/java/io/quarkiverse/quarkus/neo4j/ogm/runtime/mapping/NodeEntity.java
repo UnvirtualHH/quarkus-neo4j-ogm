@@ -15,5 +15,5 @@ public @interface NodeEntity {
     /**
      * Controls which fields should be mapped in the generated mapper.
      */
-    FieldMappingStrategy fieldMappingStrategy() default FieldMappingStrategy.EXPLICIT;
+    FieldMappingStrategy fieldMappingStrategy() default FieldMappingStrategy.IMPLICIT;
 }
