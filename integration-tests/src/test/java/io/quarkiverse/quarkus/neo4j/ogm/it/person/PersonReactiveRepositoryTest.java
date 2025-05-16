@@ -102,14 +102,13 @@ public class PersonReactiveRepositoryTest {
         assertEquals("Updated", list.getFirst().getName());
     }
 
-
     @Test
     @Order(6)
     void testQueryScalar() {
         Long count = personRepository.queryScalar(
-                        "MATCH (n:Person) RETURN count(n) AS cnt",
-                        Map.of(),
-                        record -> record.get("cnt").asLong())
+                "MATCH (n:Person) RETURN count(n) AS cnt",
+                Map.of(),
+                record -> record.get("cnt").asLong())
                 .subscribe().withSubscriber(UniAssertSubscriber.create())
                 .awaitItem().assertCompleted()
                 .getItem();

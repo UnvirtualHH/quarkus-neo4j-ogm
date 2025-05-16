@@ -141,7 +141,8 @@ public class MapperGenerator {
                         .addParameter(TypeName.get(entityType.asType()), "entity");
 
                 if (isGenerated && isUUID) {
-                    methodBuilder.addStatement("return entity.$L() != null ? entity.$L().toString() : null", getterName, getterName);
+                    methodBuilder.addStatement("return entity.$L() != null ? entity.$L().toString() : null", getterName,
+                            getterName);
                 } else {
                     methodBuilder.addStatement("return entity.$L()", getterName);
                 }

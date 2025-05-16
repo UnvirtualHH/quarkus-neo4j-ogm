@@ -131,26 +131,26 @@ public abstract class ReactiveRepository<T> {
 
     private Uni<Void> runWriteQueryVoid(String cypher, Map<String, Object> params) {
         return Multi.createFrom().resource(
-                        () -> driver.session(ReactiveSession.class),
-                        session -> session.executeWrite(tx -> {
-                            var result = tx.run(cypher, Values.value(params));
-                            return Multi.createFrom().publisher(result)
-                                    .flatMap(ReactiveResult::consume)
-                                    .flatMap(ignore -> Multi.createFrom().item((Void) null));
-                        }))
+                () -> driver.session(ReactiveSession.class),
+                session -> session.executeWrite(tx -> {
+                    var result = tx.run(cypher, Values.value(params));
+                    return Multi.createFrom().publisher(result)
+                            .flatMap(ReactiveResult::consume)
+                            .flatMap(ignore -> Multi.createFrom().item((Void) null));
+                }))
                 .withFinalizer(closeSession())
                 .toUni();
     }
 
     private <R> Uni<R> runScalarReadQuery(String cypher, Map<String, Object> params, Function<Record, R> mapper) {
         return Multi.createFrom().resource(
-                        () -> driver.session(ReactiveSession.class),
-                        session -> session.executeRead(tx -> {
-                            var result = tx.run(cypher, Values.value(params));
-                            return Multi.createFrom().publisher(result)
-                                    .flatMap(ReactiveResult::records)
-                                    .map(mapper);
-                        }))
+                () -> driver.session(ReactiveSession.class),
+                session -> session.executeRead(tx -> {
+                    var result = tx.run(cypher, Values.value(params));
+                    return Multi.createFrom().publisher(result)
+                            .flatMap(ReactiveResult::records)
+                            .map(mapper);
+                }))
                 .withFinalizer(closeSession())
                 .toUni()
                 .onItem().ifNull().failWith(() -> new RuntimeException("No scalar result"));
@@ -158,20 +158,20 @@ public abstract class ReactiveRepository<T> {
 
     private Multi<Record> runQueryInternal(String cypher, Map<String, Object> params, boolean readOnly) {
         return Multi.createFrom().resource(
-                        () -> driver.session(ReactiveSession.class),
-                        session -> {
-                            if (readOnly) {
-                                return session.executeRead(tx -> {
-                                    var result = tx.run(cypher, Values.value(params));
-                                    return Multi.createFrom().publisher(result).flatMap(ReactiveResult::records);
-                                });
-                            } else {
-                                return session.executeWrite(tx -> {
-                                    var result = tx.run(cypher, Values.value(params));
-                                    return Multi.createFrom().publisher(result).flatMap(ReactiveResult::records);
-                                });
-                            }
-                        })
+                () -> driver.session(ReactiveSession.class),
+                session -> {
+                    if (readOnly) {
+                        return session.executeRead(tx -> {
+                            var result = tx.run(cypher, Values.value(params));
+                            return Multi.createFrom().publisher(result).flatMap(ReactiveResult::records);
+                        });
+                    } else {
+                        return session.executeWrite(tx -> {
+                            var result = tx.run(cypher, Values.value(params));
+                            return Multi.createFrom().publisher(result).flatMap(ReactiveResult::records);
+                        });
+                    }
+                })
                 .withFinalizer(closeSession());
     }
 }

@@ -61,7 +61,8 @@ public class PersonRepositoryTest {
     @Test
     @Order(5)
     void testQuery() {
-        List<Person> people = personRepository.query("MATCH (n:Person) WHERE n.name = $name RETURN n AS node", Map.of("name", "Updated"));
+        List<Person> people = personRepository.query("MATCH (n:Person) WHERE n.name = $name RETURN n AS node",
+                Map.of("name", "Updated"));
         assertEquals(1, people.size());
         assertEquals("Updated", people.get(0).getName());
     }
