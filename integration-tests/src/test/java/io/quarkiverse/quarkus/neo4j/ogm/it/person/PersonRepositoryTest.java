@@ -1,15 +1,17 @@
 package io.quarkiverse.quarkus.neo4j.ogm.it.person;
 
-import io.quarkiverse.quarkus.neo4j.ogm.it.model.Person;
-import io.quarkiverse.quarkus.neo4j.ogm.it.model.PersonBaseRepository;
-import io.quarkus.test.junit.QuarkusTest;
-import jakarta.inject.Inject;
-import org.junit.jupiter.api.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import jakarta.inject.Inject;
+
+import org.junit.jupiter.api.*;
+
+import io.quarkiverse.quarkus.neo4j.ogm.it.model.Person;
+import io.quarkiverse.quarkus.neo4j.ogm.it.model.PersonBaseRepository;
+import io.quarkus.test.junit.QuarkusTest;
 
 @QuarkusTest
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)

@@ -1,11 +1,11 @@
 package io.quarkiverse.quarkus.neo4j.ogm.it.processor;
 
-import io.quarkiverse.quarkus.neo4j.ogm.it.model.PersonBaseReactiveRepository;
 import jakarta.inject.Inject;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+import io.quarkiverse.quarkus.neo4j.ogm.it.model.PersonBaseReactiveRepository;
 import io.quarkiverse.quarkus.neo4j.ogm.it.model.PersonBaseRepository;
 import io.quarkus.test.junit.QuarkusTest;
 

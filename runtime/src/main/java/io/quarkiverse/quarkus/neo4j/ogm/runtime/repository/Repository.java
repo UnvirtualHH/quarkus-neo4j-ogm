@@ -5,9 +5,9 @@ import java.util.Map;
 import java.util.function.Function;
 
 import org.neo4j.driver.*;
+import org.neo4j.driver.Record;
 
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityMapper;
-import org.neo4j.driver.Record;
 
 public abstract class Repository<T> {
 

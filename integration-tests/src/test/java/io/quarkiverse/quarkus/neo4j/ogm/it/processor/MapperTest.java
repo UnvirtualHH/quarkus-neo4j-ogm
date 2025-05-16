@@ -1,13 +1,15 @@
 package io.quarkiverse.quarkus.neo4j.ogm.it.processor;
 
-import io.quarkiverse.quarkus.neo4j.ogm.it.model.Person;
-import io.quarkiverse.quarkus.neo4j.ogm.it.model.PersonMapper;
-import io.quarkus.test.junit.QuarkusTest;
+import java.util.Map;
+
 import jakarta.inject.Inject;
+
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import java.util.Map;
+import io.quarkiverse.quarkus.neo4j.ogm.it.model.Person;
+import io.quarkiverse.quarkus.neo4j.ogm.it.model.PersonMapper;
+import io.quarkus.test.junit.QuarkusTest;
 
 @QuarkusTest
 public class MapperTest {
