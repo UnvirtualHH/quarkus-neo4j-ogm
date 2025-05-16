@@ -29,7 +29,7 @@ public class MapperTest {
 
         Map<String, Object> dbMap = personMapper.toDb(person);
         Assertions.assertNotNull(dbMap);
-        Assertions.assertEquals(1, dbMap.size());
+        Assertions.assertEquals(2, dbMap.size());
 
         Assertions.assertEquals("John Doe", dbMap.get("name"));
     }
