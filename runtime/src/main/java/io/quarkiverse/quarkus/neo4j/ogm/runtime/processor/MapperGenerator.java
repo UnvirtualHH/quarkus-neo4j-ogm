@@ -80,14 +80,20 @@ public class MapperGenerator {
         });
     }
 
+    private ParameterizedTypeName stringObjectGenericType(final String simpleName) {
+        return ParameterizedTypeName.get(
+                ClassName.get("java.util", simpleName),
+                ClassName.get(String.class),
+                ClassName.get(Object.class));
+    }
+
     private MethodSpec generateToDbMethod(TypeElement entityType, ProcessingEnvironment env) {
         MethodSpec.Builder builder = MethodSpec.methodBuilder("toDb")
                 .addModifiers(Modifier.PUBLIC)
                 .addAnnotation(Override.class)
-                .returns(ClassName.get("java.util", "Map"))
+                .returns(stringObjectGenericType("Map"))
                 .addParameter(TypeName.get(entityType.asType()), "entity")
-                .addStatement("$T<String, Object> params = new $T<>()", ClassName.get("java.util", "Map"),
-                        ClassName.get("java.util", "HashMap"));
+                .addStatement("$T params = new $T()", stringObjectGenericType("HashMap"), stringObjectGenericType("HashMap"));
 
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             if (!shouldIncludeField(field))
@@ -125,13 +131,22 @@ public class MapperGenerator {
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             if (field.getAnnotation(NodeId.class) != null) {
                 String getterName = MapperUtil.resolveGetterName(field);
-                return MethodSpec.methodBuilder("getNodeId")
+                boolean isGenerated = field.getAnnotation(GeneratedValue.class) != null;
+                boolean isUUID = field.asType().toString().equals("java.util.UUID");
+
+                MethodSpec.Builder methodBuilder = MethodSpec.methodBuilder("getNodeId")
                         .addAnnotation(Override.class)
                         .addModifiers(Modifier.PUBLIC)
                         .returns(ClassName.get("java.lang", "Object"))
-                        .addParameter(TypeName.get(entityType.asType()), "entity")
-                        .addStatement("return entity.$L()", getterName)
-                        .build();
+                        .addParameter(TypeName.get(entityType.asType()), "entity");
+
+                if (isGenerated && isUUID) {
+                    methodBuilder.addStatement("return entity.$L() != null ? entity.$L().toString() : null", getterName, getterName);
+                } else {
+                    methodBuilder.addStatement("return entity.$L()", getterName);
+                }
+
+                return methodBuilder.build();
             }
         }
         throw new IllegalStateException("No field annotated with @NodeId found in " + entityType.getSimpleName());

@@ -1,9 +1,9 @@
-package io.quarkiverse.quarkus.neo4j.ogm.it;
+package io.quarkiverse.quarkus.neo4j.ogm.it.processor;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
+import io.quarkiverse.quarkus.neo4j.ogm.it.model.PersonBaseReactiveRepository;
 import jakarta.inject.Inject;
 
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import io.quarkiverse.quarkus.neo4j.ogm.it.model.PersonBaseRepository;
@@ -20,11 +20,11 @@ public class RepositoryTest {
 
     @Test
     public void testGeneratedRepositoryIsPresent() {
-        assertThat(personBaseRepository).isNotNull();
+        Assertions.assertNotNull(personBaseRepository);
     }
 
     @Test
     public void testGeneratedReactiveRepositoryIsPresent() {
-        assertThat(personBaseReactiveRepository).isNotNull();
+        Assertions.assertNotNull(personBaseReactiveRepository);
     }
 }

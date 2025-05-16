@@ -2,16 +2,14 @@ package io.quarkiverse.quarkus.neo4j.ogm.it.model;
 
 import java.util.UUID;
 
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.GenerateRepository;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.NodeEntity;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.NodeId;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.Property;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
 
 @NodeEntity(label = "Person")
 @GenerateRepository(GenerateRepository.RepositoryType.BOTH)
 public class Person {
 
     @NodeId
+    @GeneratedValue(strategy = GeneratedValue.Strategy.UUID)
     private UUID id;
 
     @Property(name = "name")

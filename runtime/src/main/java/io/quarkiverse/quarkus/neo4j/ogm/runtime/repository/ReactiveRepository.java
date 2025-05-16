@@ -3,9 +3,8 @@ package io.quarkiverse.quarkus.neo4j.ogm.runtime.repository;
 import java.util.Map;
 import java.util.function.Function;
 
-import org.neo4j.driver.Driver;
+import org.neo4j.driver.*;
 import org.neo4j.driver.Record;
-import org.neo4j.driver.Values;
 import org.neo4j.driver.reactive.ReactiveResult;
 import org.neo4j.driver.reactive.ReactiveSession;
 
@@ -32,203 +31,147 @@ public abstract class ReactiveRepository<T> {
     }
 
     private static Function<ReactiveSession, Uni<Void>> closeSession() {
-        return session -> Uni.createFrom().publisher(session.close());
+        return session -> Uni.createFrom().publisher(session.close()).replaceWithVoid();
     }
 
     public Uni<T> findById(Object id) {
-        if (id == null) {
-            return Uni.createFrom().failure(new IllegalArgumentException("ID cannot be null"));
-        }
-        String cypher = "MATCH (n:" + label + " {id: $id}) RETURN n AS node";
-        Map<String, Object> params = Map.of("id", id);
-        return runQuerySingleAndMap(cypher, params);
+        return runReadQuerySingle("MATCH (n:" + label + " {id: $id}) RETURN n AS node", Map.of("id", id));
     }
 
     public Multi<T> findAll() {
-        String cypher = "MATCH (n:" + label + ") RETURN n AS node";
-        return runQueryAndMap(cypher, Map.of());
+        return runReadQuery("MATCH (n:" + label + ") RETURN n AS node", Map.of());
     }
 
     public Uni<Long> count() {
-        String cypher = "MATCH (n:" + label + ") RETURN count(n) AS count";
-        return Multi.createFrom().resource(
-                () -> driver.session(ReactiveSession.class),
-                session -> session.executeRead(tx -> {
-                    var result = tx.run(cypher);
-                    return Multi.createFrom().publisher(result)
-                            .flatMap(ReactiveResult::records)
-                            .map(r -> r.get("count").asLong());
-                }))
-                .withFinalizer(closeSession())
-                .toUni()
-                .onItem().ifNull().failWith(() -> new RuntimeException("Count query returned no result"));
-    }
-
-    Uni<Void> sessionFinalizer(ReactiveSession session) {
-        return Uni.createFrom().publisher(session.close()).replaceWithVoid();
+        return runScalarReadQuery("MATCH (n:" + label + ") RETURN count(n) AS count", Map.of(), r -> r.get("count").asLong());
     }
 
     public Uni<T> create(T entity) {
-        return Multi.createFrom().resource(
-                () -> driver.session(ReactiveSession.class),
-                session -> session.executeWrite(tx -> {
-                    var result = tx.run(
-                            "CREATE (n:" + label + " $props) RETURN n AS node",
-                            Values.parameters("props", entityMapper.toDb(entity)));
-
-                    return Multi.createFrom().publisher(result)
-                            .flatMap(ReactiveResult::records);
-                }))
-                .withFinalizer(this::sessionFinalizer)
-                .collect().asList()
-                .map(records -> entityMapper.map((Record) records.get(0), "node"));
-    }
-
-    public Uni<Void> execute(String cypher, Map<String, Object> parameters) {
-        return Multi.createFrom().resource(
-                () -> driver.session(ReactiveSession.class),
-                session -> session.executeWrite(tx -> {
-                    var result = tx.run(cypher, Values.value(parameters));
-                    return Multi.createFrom().publisher(result)
-                            .flatMap(ReactiveResult::consume)
-                            .flatMap(ignore -> Multi.createFrom().item((Void) null));
-                }))
-                .withFinalizer(this::sessionFinalizer)
-                .toUni();
+        String cypher = "CREATE (n:" + label + " $props) RETURN n AS node";
+        return runWriteQuerySingle(cypher, Map.of("props", entityMapper.toDb(entity)));
     }
 
     public Uni<T> update(T entity) {
         String cypher = "MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n AS node";
-        Map<String, Object> params = Map.of(
+        return runWriteQuerySingle(cypher, Map.of(
                 "id", entityMapper.getNodeId(entity),
-                "props", entityMapper.toDb(entity));
-        return runQuerySingleAndMap(cypher, params);
+                "props", entityMapper.toDb(entity)));
     }
 
     public Uni<T> merge(T entity) {
         String cypher = "MERGE (n:" + label + " {id: $id}) SET n += $props RETURN n AS node";
-        Map<String, Object> params = Map.of(
+        return runWriteQuerySingle(cypher, Map.of(
                 "id", entityMapper.getNodeId(entity),
-                "props", entityMapper.toDb(entity));
-        return runQuerySingleAndMap(cypher, params);
+                "props", entityMapper.toDb(entity)));
     }
 
     public Uni<Void> delete(T entity) {
-        Object id = entityMapper.getNodeId(entity);
-        if (id == null) {
-            return Uni.createFrom().failure(new IllegalArgumentException("ID cannot be null"));
-        }
-
-        String cypher = "MATCH (n:" + label + " {id: $id}) DELETE n";
-        return Multi.createFrom().resource(
-                () -> driver.session(ReactiveSession.class),
-                session -> session.executeWrite(tx -> {
-                    var result = tx.run(cypher, Values.parameters("id", id));
-                    return Multi.createFrom().publisher(result)
-                            .flatMap(ReactiveResult::consume).flatMap(ignore -> Multi.createFrom().item((Void) null));
-                }))
-                .withFinalizer(closeSession())
-                .toUni();
+        return deleteById(entityMapper.getNodeId(entity));
     }
 
     public Uni<Void> deleteById(Object id) {
-        if (id == null) {
-            return Uni.createFrom().failure(new IllegalArgumentException("ID cannot be null"));
-        }
         String cypher = "MATCH (n:" + label + " {id: $id}) DELETE n";
-        return Multi.createFrom().resource(
-                () -> driver.session(ReactiveSession.class),
-                session -> session.executeWrite(tx -> {
-                    var result = tx.run(cypher, Values.parameters("id", id));
-                    return Multi.createFrom().publisher(result)
-                            .flatMap(ReactiveResult::consume).flatMap(ignore -> Multi.createFrom().item((Void) null));
-                }))
-                .withFinalizer(closeSession())
-                .toUni();
-    }
-
-    public Uni<Boolean> exists(T entity) {
-        Object id = entityMapper.getNodeId(entity);
-        if (id == null) {
-            return Uni.createFrom().failure(new IllegalArgumentException("Entity ID cannot be null"));
-        }
-
-        String cypher = "MATCH (n:" + label + " {id: $id}) RETURN count(n) > 0 AS exists";
-        return runBooleanQuery(cypher, Map.of("id", id));
+        return runWriteQueryVoid(cypher, Map.of("id", id));
     }
 
     public Uni<Boolean> existsById(Object id) {
-        if (id == null) {
-            return Uni.createFrom().failure(new IllegalArgumentException("ID cannot be null"));
-        }
-
         String cypher = "MATCH (n:" + label + " {id: $id}) RETURN count(n) > 0 AS exists";
-        return runBooleanQuery(cypher, Map.of("id", id));
+        return runScalarReadQuery(cypher, Map.of("id", id), r -> r.get("exists").asBoolean());
+    }
+
+    public Uni<Boolean> exists(T entity) {
+        return existsById(entityMapper.getNodeId(entity));
     }
 
     public Multi<T> query(String cypher) {
-        return runQueryAndMap(cypher, Map.of());
+        return runReadQuery(cypher, Map.of());
     }
 
-    public Multi<T> query(String cypher, Map<String, Object> parameters) {
-        return runQueryAndMap(cypher, parameters);
+    public Multi<T> query(String cypher, Map<String, Object> params) {
+        return runReadQuery(cypher, params);
     }
 
     public Uni<T> querySingle(String cypher) {
-        return runQuerySingleAndMap(cypher, Map.of());
+        return runWriteQuerySingle(cypher, Map.of());
     }
 
-    public Uni<T> querySingle(String cypher, Map<String, Object> parameters) {
-        return runQuerySingleAndMap(cypher, parameters);
+    public Uni<T> querySingle(String cypher, Map<String, Object> params) {
+        return runWriteQuerySingle(cypher, params);
     }
 
     public <R> Uni<R> queryScalar(String cypher, Map<String, Object> params, Function<Record, R> mapper) {
-        return runScalarQuery(cypher, params, mapper);
+        return runScalarReadQuery(cypher, params, mapper);
     }
 
-    private Multi<T> runQueryAndMap(String cypher, Map<String, Object> parameters) {
-        return Multi.createFrom().resource(
-                () -> driver.session(ReactiveSession.class),
-                session -> session.executeRead(tx -> {
-                    var result = tx.run(cypher, Values.value(parameters));
-                    return Multi.createFrom().publisher(result)
-                            .flatMap(ReactiveResult::records)
-                            .map(r -> entityMapper.map(r, "node"));
-                }))
-                .withFinalizer(closeSession());
+    public Uni<Void> execute(String cypher, Map<String, Object> params) {
+        return runWriteQueryVoid(cypher, params);
     }
 
-    private Uni<T> runQuerySingleAndMap(String cypher, Map<String, Object> parameters) {
-        return runQueryAndMap(cypher, parameters)
+    private Multi<T> runReadQuery(String cypher, Map<String, Object> params) {
+        return runQueryInternal(cypher, params, true)
+                .map(r -> entityMapper.map(r, "node"));
+    }
+
+    private Uni<T> runReadQuerySingle(String cypher, Map<String, Object> params) {
+        return runReadQuery(cypher, params)
                 .toUni()
                 .onItem().ifNull().failWith(() -> new RuntimeException("No result found"));
     }
 
-    private Uni<Boolean> runBooleanQuery(String cypher, Map<String, Object> parameters) {
+    private Uni<T> runWriteQuerySingle(String cypher, Map<String, Object> params) {
+        return runQueryInternal(cypher, params, false)
+                .collect().asList()
+                .map(records -> {
+                    if (records.isEmpty()) {
+                        throw new RuntimeException("No result found");
+                    }
+                    return entityMapper.map(records.get(0), "node");
+                });
+    }
+
+    private Uni<Void> runWriteQueryVoid(String cypher, Map<String, Object> params) {
         return Multi.createFrom().resource(
-                () -> driver.session(ReactiveSession.class),
-                session -> session.executeRead(tx -> {
-                    var result = tx.run(cypher, Values.value(parameters));
-                    return Multi.createFrom().publisher(result)
-                            .flatMap(ReactiveResult::records)
-                            .map(record -> record.get("exists").asBoolean());
-                }))
+                        () -> driver.session(ReactiveSession.class),
+                        session -> session.executeWrite(tx -> {
+                            var result = tx.run(cypher, Values.value(params));
+                            return Multi.createFrom().publisher(result)
+                                    .flatMap(ReactiveResult::consume)
+                                    .flatMap(ignore -> Multi.createFrom().item((Void) null));
+                        }))
                 .withFinalizer(closeSession())
                 .toUni();
     }
 
-    private <R> Uni<R> runScalarQuery(String cypher, Map<String, Object> parameters, Function<Record, R> mapper) {
+    private <R> Uni<R> runScalarReadQuery(String cypher, Map<String, Object> params, Function<Record, R> mapper) {
         return Multi.createFrom().resource(
-                () -> driver.session(ReactiveSession.class),
-                session -> session.executeRead(tx -> {
-                    var result = tx.run(cypher, Values.value(parameters));
-                    return Multi.createFrom().publisher(result)
-                            .flatMap(ReactiveResult::records)
-                            .map(mapper);
-                }))
+                        () -> driver.session(ReactiveSession.class),
+                        session -> session.executeRead(tx -> {
+                            var result = tx.run(cypher, Values.value(params));
+                            return Multi.createFrom().publisher(result)
+                                    .flatMap(ReactiveResult::records)
+                                    .map(mapper);
+                        }))
                 .withFinalizer(closeSession())
                 .toUni()
-                .onItem().ifNull().failWith(() -> new RuntimeException("Scalar query returned no result"));
+                .onItem().ifNull().failWith(() -> new RuntimeException("No scalar result"));
     }
 
+    private Multi<Record> runQueryInternal(String cypher, Map<String, Object> params, boolean readOnly) {
+        return Multi.createFrom().resource(
+                        () -> driver.session(ReactiveSession.class),
+                        session -> {
+                            if (readOnly) {
+                                return session.executeRead(tx -> {
+                                    var result = tx.run(cypher, Values.value(params));
+                                    return Multi.createFrom().publisher(result).flatMap(ReactiveResult::records);
+                                });
+                            } else {
+                                return session.executeWrite(tx -> {
+                                    var result = tx.run(cypher, Values.value(params));
+                                    return Multi.createFrom().publisher(result).flatMap(ReactiveResult::records);
+                                });
+                            }
+                        })
+                .withFinalizer(closeSession());
+    }
 }
