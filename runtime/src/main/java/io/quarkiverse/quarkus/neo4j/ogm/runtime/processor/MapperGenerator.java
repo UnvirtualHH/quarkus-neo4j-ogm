@@ -1,6 +1,8 @@
 package io.quarkiverse.quarkus.neo4j.ogm.runtime.processor;
 
 import java.io.IOException;
+import java.util.List;
+import java.util.Map;
 
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.*;
@@ -19,7 +21,7 @@ import io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil;
 
 public class MapperGenerator {
 
-    private FieldMappingStrategy strategy;
+    private final FieldMappingStrategy strategy;
 
     public MapperGenerator(FieldMappingStrategy strategy) {
         this.strategy = strategy;
@@ -66,7 +68,6 @@ public class MapperGenerator {
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             if (!shouldIncludeField(field))
                 continue;
-
             generateMapStatement(field, builder, env);
         }
 
@@ -80,51 +81,66 @@ public class MapperGenerator {
         });
     }
 
-    private ParameterizedTypeName stringObjectGenericType(final String simpleName) {
-        return ParameterizedTypeName.get(
-                ClassName.get("java.util", simpleName),
-                ClassName.get(String.class),
-                ClassName.get(Object.class));
-    }
-
     private MethodSpec generateToDbMethod(TypeElement entityType, ProcessingEnvironment env) {
         MethodSpec.Builder builder = MethodSpec.methodBuilder("toDb")
                 .addModifiers(Modifier.PUBLIC)
                 .addAnnotation(Override.class)
-                .returns(stringObjectGenericType("Map"))
+                .returns(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "EntityWithRelations"))
                 .addParameter(TypeName.get(entityType.asType()), "entity")
-                .addStatement("$T params = new $T()", stringObjectGenericType("HashMap"), stringObjectGenericType("HashMap"));
+                .addStatement("$T properties = new $T<>()",
+                        ParameterizedTypeName.get(Map.class, String.class, Object.class),
+                        ClassName.get("java.util", "HashMap"))
+                .addStatement("$T relationships = new $T<>()",
+                        ParameterizedTypeName.get(
+                                ClassName.get(List.class),
+                                ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "RelationshipData")),
+                        ClassName.get("java.util", "ArrayList"));
 
+        // Properties
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             if (!shouldIncludeField(field))
                 continue;
 
-            generateToDbStatement(field, builder, env);
+            TypeHandlerRegistry.findHandler(field).ifPresent(handler -> {
+                builder.addCode(handler.generateToDbCode(field, "entity", "properties"));
+            });
         }
 
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             Relationship relationship = field.getAnnotation(Relationship.class);
             if (relationship != null) {
-                String relationshipType = relationship.type();
-                Direction direction = relationship.direction();
                 String getterName = MapperUtil.resolveGetterName(field);
-                String cypherDirection = (direction == Direction.OUTGOING) ? "->" : "<-";
+                String relType = relationship.type();
+                Direction direction = relationship.direction();
 
-                builder.addStatement("if (entity.$L() != null) { params.put($S, $S); }",
-                        getterName,
-                        relationshipType,
-                        String.format("MATCH (n)-[r:%s]%s(target) MERGE r SET r = $props", relationshipType, cypherDirection));
+                boolean isCollection = field.asType().toString().startsWith("java.util.List");
+
+                if (isCollection) {
+                    builder.beginControlFlow("if (entity.$L() != null)", getterName)
+                            .beginControlFlow("for (var related : entity.$L())", getterName)
+                            .addStatement("relationships.add(new $T($S, $T.$L, related))",
+                                    ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "RelationshipData"),
+                                    relType,
+                                    ClassName.get(Direction.class),
+                                    direction.name())
+                            .endControlFlow()
+                            .endControlFlow();
+                } else {
+                    builder.beginControlFlow("if (entity.$L() != null)", getterName)
+                            .addStatement("relationships.add(new $T($S, $T.$L, entity.$L()))",
+                                    ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "RelationshipData"),
+                                    relType,
+                                    ClassName.get(Direction.class),
+                                    direction.name(),
+                                    getterName)
+                            .endControlFlow();
+                }
             }
         }
 
-        builder.addStatement("return params");
+        builder.addStatement("return new $T(properties, relationships)",
+                ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "EntityWithRelations"));
         return builder.build();
-    }
-
-    private void generateToDbStatement(VariableElement field, MethodSpec.Builder builder, ProcessingEnvironment env) {
-        TypeHandlerRegistry.findHandler(field).ifPresent(handler -> {
-            builder.addCode(handler.generateToDbCode(field, "entity"));
-        });
     }
 
     private MethodSpec generateGetNodeIdMethod(TypeElement entityType) {
@@ -141,8 +157,8 @@ public class MapperGenerator {
                         .addParameter(TypeName.get(entityType.asType()), "entity");
 
                 if (isGenerated && isUUID) {
-                    methodBuilder.addStatement("return entity.$L() != null ? entity.$L().toString() : null", getterName,
-                            getterName);
+                    methodBuilder.addStatement("return entity.$L() != null ? entity.$L().toString() : null",
+                            getterName, getterName);
                 } else {
                     methodBuilder.addStatement("return entity.$L()", getterName);
                 }
@@ -164,5 +180,4 @@ public class MapperGenerator {
                     && TypeHandlerRegistry.findHandler(field).isPresent();
         }
     }
-
 }

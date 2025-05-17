@@ -9,6 +9,7 @@ import com.palantir.javapoet.CodeBlock;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.TypeHandler;
 
 public class PointTypeHandler implements TypeHandler {
+
     @Override
     public boolean supports(VariableElement field) {
         return field.asType().toString().equals("org.neo4j.driver.types.Point");
@@ -16,13 +17,21 @@ public class PointTypeHandler implements TypeHandler {
 
     @Override
     public CodeBlock generateSetterCode(VariableElement field, String targetVar, String valueSource) {
-        return CodeBlock.of("$L.$L($L.get($S).asPoint());\n",
-                targetVar, resolveSetterName(field), valueSource, getPropertyName(field));
+        return CodeBlock.of(
+                "$L.$L($L.get($S).asPoint());\n",
+                targetVar,
+                resolveSetterName(field),
+                valueSource,
+                getPropertyName(field));
     }
 
     @Override
-    public CodeBlock generateToDbCode(VariableElement field, String entityVar) {
-        return CodeBlock.of("params.put($S, $L.$L());\n",
-                getPropertyName(field), entityVar, resolveGetterName(field));
+    public CodeBlock generateToDbCode(VariableElement field, String entityVar, String mapVar) {
+        return CodeBlock.of(
+                "$L.put($S, $L.$L());\n",
+                mapVar,
+                getPropertyName(field),
+                entityVar,
+                resolveGetterName(field));
     }
 }

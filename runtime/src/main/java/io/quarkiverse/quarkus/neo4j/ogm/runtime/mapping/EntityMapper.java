@@ -1,7 +1,5 @@
 package io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping;
 
-import java.util.Map;
-
 public interface EntityMapper<T> {
     /**
      * Maps a Neo4j record to the entity.
@@ -18,7 +16,7 @@ public interface EntityMapper<T> {
      * @param entity The entity to convert.
      * @return A map of parameters to be used in Cypher queries.
      */
-    Map<String, Object> toDb(T entity);
+    EntityWithRelations toDb(T entity);
 
     /**
      * Returns the node ID of the entity.

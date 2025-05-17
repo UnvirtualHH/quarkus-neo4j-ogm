@@ -10,6 +10,7 @@ import com.palantir.javapoet.CodeBlock;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.TypeHandler;
 
 public class SetTypeHandler implements TypeHandler {
+
     @Override
     public boolean supports(VariableElement field) {
         return field.asType().toString().equals("java.util.Set");
@@ -18,15 +19,23 @@ public class SetTypeHandler implements TypeHandler {
     @Override
     public CodeBlock generateSetterCode(VariableElement field, String targetVar, String valueSource) {
         return CodeBlock.builder()
-                .addStatement("$L.$L($L.get($S).asList().stream().collect($T.toSet()))",
-                        targetVar, resolveSetterName(field), valueSource, getPropertyName(field),
+                .addStatement(
+                        "$L.$L($L.get($S).asList().stream().collect($T.toSet()))",
+                        targetVar,
+                        resolveSetterName(field),
+                        valueSource,
+                        getPropertyName(field),
                         ClassName.get("java.util.stream", "Collectors"))
                 .build();
     }
 
     @Override
-    public CodeBlock generateToDbCode(VariableElement field, String entityVar) {
-        return CodeBlock.of("params.put($S, $L.$L());\n",
-                getPropertyName(field), entityVar, resolveGetterName(field));
+    public CodeBlock generateToDbCode(VariableElement field, String entityVar, String mapVar) {
+        return CodeBlock.of(
+                "$L.put($S, $L.$L());\n",
+                mapVar,
+                getPropertyName(field),
+                entityVar,
+                resolveGetterName(field));
     }
 }

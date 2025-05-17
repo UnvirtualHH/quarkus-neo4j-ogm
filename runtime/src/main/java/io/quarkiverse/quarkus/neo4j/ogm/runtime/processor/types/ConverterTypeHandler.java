@@ -28,12 +28,16 @@ public class ConverterTypeHandler implements TypeHandler {
         return CodeBlock.builder()
                 .addStatement("$T $L = new $T()", converterClass, converterVar, converterClass)
                 .addStatement("$L.$L($L.toEntityAttribute($L.get($S).asString()))",
-                        targetVar, resolveSetterName(field), converterVar, valueSource, getPropertyName(field))
+                        targetVar,
+                        resolveSetterName(field),
+                        converterVar,
+                        valueSource,
+                        getPropertyName(field))
                 .build();
     }
 
     @Override
-    public CodeBlock generateToDbCode(VariableElement field, String entityVar) {
+    public CodeBlock generateToDbCode(VariableElement field, String entityVar, String mapVar) {
         TypeMirror converterType = getConverterType(field);
         TypeName converterClass = TypeName.get(converterType);
         String converterVar = field.getSimpleName().toString() + "Converter";
@@ -42,8 +46,10 @@ public class ConverterTypeHandler implements TypeHandler {
 
         return CodeBlock.builder()
                 .addStatement("$T $L = new $T()", converterClass, converterVar, converterClass)
-                .addStatement("if ($L.$L() != null) params.put($S, $L.toGraphProperty($L.$L()))",
-                        entityVar, getter, property, converterVar, entityVar, getter)
+                .addStatement("if ($L.$L() != null) $L.put($S, $L.toGraphProperty($L.$L()))",
+                        entityVar, getter,
+                        mapVar, property,
+                        converterVar, entityVar, getter)
                 .build();
     }
 

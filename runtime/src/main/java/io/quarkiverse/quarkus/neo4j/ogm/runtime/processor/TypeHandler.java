@@ -9,5 +9,5 @@ public interface TypeHandler {
 
     CodeBlock generateSetterCode(VariableElement field, String targetVar, String valueSource);
 
-    CodeBlock generateToDbCode(VariableElement field, String entityVar);
+    CodeBlock generateToDbCode(VariableElement field, String entityVar, String mapVar);
 }

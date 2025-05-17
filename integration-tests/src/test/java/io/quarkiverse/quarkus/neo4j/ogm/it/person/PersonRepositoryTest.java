@@ -9,6 +9,7 @@ import jakarta.inject.Inject;
 
 import org.junit.jupiter.api.*;
 
+import io.quarkiverse.quarkus.neo4j.ogm.it.model.Address;
 import io.quarkiverse.quarkus.neo4j.ogm.it.model.Person;
 import io.quarkiverse.quarkus.neo4j.ogm.it.model.PersonBaseRepository;
 import io.quarkus.test.junit.QuarkusTest;
@@ -108,4 +109,74 @@ public class PersonRepositoryTest {
 
         assertFalse(personRepository.existsById(createdId));
     }
+
+    @Test
+    @Order(10)
+    void testFollowRelationship() {
+        Person alice = new Person();
+        alice.setName("Alice");
+        Person bob = new Person();
+        bob.setName("Bob");
+
+        alice = personRepository.create(alice);
+        bob = personRepository.create(bob);
+
+        // CREATE relationship manually
+        personRepository.execute(
+                "MATCH (a:Person {id: $id1}), (b:Person {id: $id2}) " +
+                        "CREATE (a)-[:follows]->(b)",
+                Map.of("id1", alice.getId().toString(), "id2", bob.getId().toString()));
+
+        // Validate the relationship
+        List<Person> result = personRepository.query(
+                "MATCH (a:Person)-[:follows]->(b:Person {id: $id}) RETURN a AS node",
+                Map.of("id", bob.getId().toString()));
+
+        assertEquals(1, result.size());
+        assertEquals("Alice", result.getFirst().getName());
+    }
+
+    @Test
+    @Order(11)
+    void testLoadFollowRelationship() {
+        Person alice = new Person();
+        alice.setName("Alice");
+        Person bob = new Person();
+        bob.setName("Bob");
+
+        alice.setFollowing(List.of(bob));
+
+        alice = personRepository.create(alice);
+
+        // Validate the relationship
+        List<Person> result = personRepository.query(
+                "MATCH (a:Person {id: $id})-[:follows]->(b:Person) RETURN a AS node",
+                Map.of("id", alice.getId().toString()));
+
+        assertEquals(1, result.size());
+        assertEquals("Alice", result.getFirst().getName());
+    }
+
+    @Test
+    @Order(11)
+    void testLoadFollowOtherRelationship() {
+        Person alice = new Person();
+        alice.setName("Alice");
+        Address address = new Address();
+        address.setStreet("Testway");
+        address.setHousenumber("135b");
+
+        alice.setAddress(address);
+
+        alice = personRepository.create(alice);
+
+        // Validate the relationship
+        List<Person> result = personRepository.query(
+                "MATCH (a:Person {id: $id})-[:located_in]->(b:Address) RETURN a AS node",
+                Map.of("id", alice.getId().toString()));
+
+        assertEquals(1, result.size());
+        assertEquals("Alice", result.getFirst().getName());
+    }
+
 }

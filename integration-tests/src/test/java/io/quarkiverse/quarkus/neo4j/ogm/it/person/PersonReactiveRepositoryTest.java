@@ -9,6 +9,7 @@ import jakarta.inject.Inject;
 
 import org.junit.jupiter.api.*;
 
+import io.quarkiverse.quarkus.neo4j.ogm.it.model.Address;
 import io.quarkiverse.quarkus.neo4j.ogm.it.model.Person;
 import io.quarkiverse.quarkus.neo4j.ogm.it.model.PersonBaseReactiveRepository;
 import io.quarkus.test.junit.QuarkusTest;
@@ -158,6 +159,17 @@ public class PersonReactiveRepositoryTest {
     @Test
     @Order(9)
     void testDelete() {
+        if (createdId == null) {
+            Person person = new Person();
+            person.setName("Tester");
+
+            Person created = personRepository.create(person)
+                    .subscribe().withSubscriber(UniAssertSubscriber.create())
+                    .awaitItem().assertCompleted()
+                    .getItem();
+
+            createdId = created.getId().toString();
+        }
         Person person = personRepository.findById(createdId).await().indefinitely();
 
         personRepository.delete(person)
@@ -171,4 +183,70 @@ public class PersonReactiveRepositoryTest {
 
         assertFalse(exists);
     }
+
+    @Test
+    @Order(10)
+    void testFollowRelationshipReactive() {
+        Person alice = new Person();
+        alice.setName("Alice");
+
+        Person bob = new Person();
+        bob.setName("Bob");
+
+        Person createdAlice = personRepository.create(alice)
+                .subscribe().withSubscriber(UniAssertSubscriber.create())
+                .awaitItem().assertCompleted()
+                .getItem();
+
+        Person createdBob = personRepository.create(bob)
+                .subscribe().withSubscriber(UniAssertSubscriber.create())
+                .awaitItem().assertCompleted()
+                .getItem();
+
+        personRepository.execute(
+                "MATCH (a:Person {id: $id1}), (b:Person {id: $id2}) " +
+                        "CREATE (a)-[:follows]->(b)",
+                Map.of("id1", createdAlice.getId().toString(), "id2", createdBob.getId().toString())).subscribe()
+                .withSubscriber(UniAssertSubscriber.create())
+                .awaitItem().assertCompleted();
+
+        List<Person> followers = personRepository.query(
+                "MATCH (a:Person)-[:follows]->(b:Person {id: $id}) RETURN a AS node",
+                Map.of("id", createdBob.getId().toString())).subscribe().withSubscriber(AssertSubscriber.create(10))
+                .awaitItems(1)
+                .getItems();
+
+        assertEquals(1, followers.size());
+        assertEquals("Alice", followers.getFirst().getName());
+    }
+
+    @Test
+    @Order(11)
+    void testFindByIdWithRelationships() {
+        Person alice = new Person();
+        alice.setName("Alice");
+        Address address = new Address();
+        address.setStreet("Testway");
+        address.setHousenumber("135b");
+
+        alice.setAddress(address);
+
+        Person savedAlice = personRepository.create(alice)
+                .subscribe().withSubscriber(UniAssertSubscriber.create())
+                .awaitItem().assertCompleted()
+                .getItem();
+
+        AssertSubscriber<Person> subscriber = personRepository.query(
+                "MATCH (a:Person {id: $id})-[:located_in]->(b:Address) RETURN a AS node",
+                Map.of("id", alice.getId().toString())).subscribe().withSubscriber(AssertSubscriber.create(10));
+
+        List<Person> list = subscriber
+                .awaitItems(1)
+                .assertCompleted()
+                .getItems();
+
+        assertEquals(1, list.size());
+        assertEquals("Alice", list.getFirst().getName());
+    }
+
 }

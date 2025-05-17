@@ -30,8 +30,9 @@ public abstract class AbstractSimpleTypeHandler implements TypeHandler {
     }
 
     @Override
-    public CodeBlock generateToDbCode(VariableElement field, String entityVar) {
-        return CodeBlock.of("params.put($S, $L.$L());\n",
+    public CodeBlock generateToDbCode(VariableElement field, String entityVar, String mapVar) {
+        return CodeBlock.of("$L.put($S, $L.$L());\n",
+                mapVar,
                 getPropertyName(field),
                 entityVar,
                 resolveGetterName(field));

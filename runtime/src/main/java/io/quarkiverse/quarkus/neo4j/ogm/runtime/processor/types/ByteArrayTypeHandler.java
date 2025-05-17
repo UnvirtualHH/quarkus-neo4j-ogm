@@ -21,8 +21,12 @@ public class ByteArrayTypeHandler implements TypeHandler {
     }
 
     @Override
-    public CodeBlock generateToDbCode(VariableElement field, String entityVar) {
-        return CodeBlock.of("params.put($S, $L.$L());\n",
-                getPropertyName(field), entityVar, resolveGetterName(field));
+    public CodeBlock generateToDbCode(VariableElement field, String entityVar, String mapVar) {
+        return CodeBlock.of(
+                "$L.put($S, $L.$L());\n",
+                mapVar,
+                getPropertyName(field),
+                entityVar,
+                resolveGetterName(field));
     }
 }

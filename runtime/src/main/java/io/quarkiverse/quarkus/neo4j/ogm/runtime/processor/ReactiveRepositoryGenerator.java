@@ -42,14 +42,23 @@ public class ReactiveRepositoryGenerator {
                 .addModifiers(Modifier.PUBLIC)
                 .addParameter(ClassName.get("org.neo4j.driver", "Driver"), "driver")
                 .addParameter(ClassName.get(packageName, mapperClassName), "entityMapper")
-                .addStatement("super(driver, $S, entityMapper)", label)
+                .addParameter(
+                        ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "ReactiveRepositoryRegistry"),
+                        "reactiveRegistry")
+                .addStatement("super(driver, $S, entityMapper, reactiveRegistry)", label)
                 .build();
 
         TypeSpec.Builder repositoryClassBuilder = TypeSpec.classBuilder(repositoryClassName)
                 .addAnnotation(ApplicationScoped.class)
+                .addAnnotation(ClassName.get("io.quarkus.runtime", "Startup"))
                 .addModifiers(Modifier.PUBLIC)
                 .addMethod(noArgsConstructor)
                 .addMethod(constructor)
+                .addMethod(MethodSpec.methodBuilder("registerSelf")
+                        .addAnnotation(ClassName.get("jakarta.annotation", "PostConstruct"))
+                        .addModifiers(Modifier.PRIVATE)
+                        .addStatement("reactiveRegistry.register($T.class, this)", entityType)
+                        .build())
                 .superclass(ParameterizedTypeName.get(
                         ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "ReactiveRepository"),
                         TypeName.get(entityType.asType())));
@@ -109,6 +118,15 @@ public class ReactiveRepositoryGenerator {
         for (MethodSpec method : generatedMethods) {
             repositoryClassBuilder.addMethod(method);
         }
+
+        MethodSpec getEntityTypeMethod = MethodSpec.methodBuilder("getEntityType")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PROTECTED)
+                .returns(ParameterizedTypeName.get(ClassName.get(Class.class), TypeName.get(entityType.asType())))
+                .addStatement("return $T.class", TypeName.get(entityType.asType()))
+                .build();
+
+        repositoryClassBuilder.addMethod(getEntityTypeMethod);
 
         TypeSpec repositoryClass = repositoryClassBuilder.build();
         JavaFile javaFile = JavaFile.builder(packageName, repositoryClass).build();

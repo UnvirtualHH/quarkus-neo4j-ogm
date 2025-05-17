@@ -2,30 +2,38 @@ package io.quarkiverse.quarkus.neo4j.ogm.runtime.repository;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 import org.neo4j.driver.*;
 import org.neo4j.driver.Record;
 
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityMapper;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityWithRelations;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationshipData;
 
 public abstract class Repository<T> {
 
     protected final Driver driver;
     protected final String label;
     protected final EntityMapper<T> entityMapper;
+    protected final RepositoryRegistry registry;
 
     public Repository() {
         this.driver = null;
         this.label = null;
         this.entityMapper = null;
+        this.registry = null;
     }
 
-    public Repository(Driver driver, String label, EntityMapper<T> entityMapper) {
+    public Repository(Driver driver, String label, EntityMapper<T> entityMapper, RepositoryRegistry registry) {
         this.driver = driver;
         this.label = label;
         this.entityMapper = entityMapper;
+        this.registry = registry;
     }
+
+    protected abstract Class<T> getEntityType();
 
     private <R> R inWriteTx(Function<Transaction, R> work) {
         try (Session session = driver.session()) {
@@ -37,7 +45,7 @@ public abstract class Repository<T> {
         }
     }
 
-    private void inWriteTxVoid(java.util.function.Consumer<Transaction> work) {
+    private void inWriteTxVoid(Consumer<Transaction> work) {
         try (Session session = driver.session()) {
             try (Transaction tx = session.beginTransaction()) {
                 work.accept(tx);
@@ -70,9 +78,15 @@ public abstract class Repository<T> {
 
     public T create(T entity) {
         return inWriteTx(tx -> {
+            EntityWithRelations data = entityMapper.toDb(entity);
+            Object id = entityMapper.getNodeId(entity);
+
             var result = tx.run("CREATE (n:" + label + " $props) RETURN n AS node",
-                    Values.parameters("props", entityMapper.toDb(entity)));
-            return entityMapper.map(result.single(), "node");
+                    Values.parameters("props", data.getProperties()));
+            T saved = entityMapper.map(result.single(), "node");
+
+            persistRelationships(tx, label, id, data.getRelationships());
+            return saved;
         });
     }
 
@@ -82,9 +96,14 @@ public abstract class Repository<T> {
             throw new IllegalArgumentException("Entity ID cannot be null");
 
         return inWriteTx(tx -> {
+            EntityWithRelations data = entityMapper.toDb(entity);
+
             var result = tx.run("MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
-                    Values.parameters("id", id, "props", entityMapper.toDb(entity)));
-            return entityMapper.map(result.single(), "node");
+                    Values.parameters("id", id, "props", data.getProperties()));
+            T updated = entityMapper.map(result.single(), "node");
+
+            persistRelationships(tx, label, id, data.getRelationships());
+            return updated;
         });
     }
 
@@ -94,9 +113,14 @@ public abstract class Repository<T> {
             throw new IllegalArgumentException("Entity ID cannot be null");
 
         return inWriteTx(tx -> {
+            EntityWithRelations data = entityMapper.toDb(entity);
+
             var result = tx.run("MERGE (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
-                    Values.parameters("id", id, "props", entityMapper.toDb(entity)));
-            return entityMapper.map(result.single(), "node");
+                    Values.parameters("id", id, "props", data.getProperties()));
+            T merged = entityMapper.map(result.single(), "node");
+
+            persistRelationships(tx, label, id, data.getRelationships());
+            return merged;
         });
     }
 
@@ -153,5 +177,44 @@ public abstract class Repository<T> {
 
     public <R> R queryScalar(String cypher, Map<String, Object> parameters, Function<Record, R> mapper) {
         return inWriteTx(tx -> mapper.apply(tx.run(cypher, Values.value(parameters)).single()));
+    }
+
+    private void persistRelationships(Transaction tx, String label, Object fromId, List<RelationshipData> relationships) {
+        if (relationships == null || relationships.isEmpty())
+            return;
+
+        for (RelationshipData rel : relationships) {
+            Object toId = rel.getTargetId();
+
+            if (toId == null && rel.getTargetEntity() != null) {
+                Object target = rel.getTargetEntity();
+                Class<?> targetType = target.getClass();
+
+                Repository<Object> targetRepo = (Repository<Object>) registry.getRepository(targetType);
+                Object id = targetRepo.getEntityMapper().getNodeId(target);
+                if (id == null) {
+                    Object merged = targetRepo.create(target);
+                    id = targetRepo.getEntityMapper().getNodeId(merged);
+                }
+                rel.setTargetId(id);
+                toId = id;
+            }
+
+            if (toId == null)
+                continue;
+
+            String query = switch (rel.getDirection()) {
+                case OUTGOING -> "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)-[r:" + rel.getType() + "]->(b)";
+                case INCOMING -> "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)<-[r:" + rel.getType() + "]-(b)";
+                case BOTH -> throw new UnsupportedOperationException("Direction.BOTH is not supported yet");
+                case UNDIRECTED -> throw new UnsupportedOperationException("Direction.UNDIRECTED is not supported yet");
+            };
+
+            tx.run(query, Values.parameters("from", fromId, "to", toId));
+        }
+    }
+
+    public EntityMapper<T> getEntityMapper() {
+        return entityMapper;
     }
 }

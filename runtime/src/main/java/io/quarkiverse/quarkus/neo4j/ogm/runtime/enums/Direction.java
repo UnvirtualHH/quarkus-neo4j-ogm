@@ -4,6 +4,7 @@ public enum Direction {
 
     INCOMING,
     OUTGOING,
+    BOTH,
     UNDIRECTED,
 
 }

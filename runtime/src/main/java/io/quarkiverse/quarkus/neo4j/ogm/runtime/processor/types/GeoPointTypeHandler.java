@@ -10,6 +10,7 @@ import com.palantir.javapoet.CodeBlock;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.TypeHandler;
 
 public class GeoPointTypeHandler implements TypeHandler {
+
     @Override
     public boolean supports(VariableElement field) {
         return field.asType().toString().equals("io.quarkiverse.quarkus.neo4j.ogm.runtime.model.GeoPoint");
@@ -29,16 +30,17 @@ public class GeoPointTypeHandler implements TypeHandler {
     }
 
     @Override
-    public CodeBlock generateToDbCode(VariableElement field, String entityVar) {
+    public CodeBlock generateToDbCode(VariableElement field, String entityVar, String mapVar) {
         String getter = resolveGetterName(field);
         String property = getPropertyName(field);
+
         return CodeBlock.builder()
-                .addStatement("if ($L.$L() != null) {", entityVar, getter)
-                .addStatement("  var geo = $L.$L();", entityVar, getter)
+                .beginControlFlow("if ($L.$L() != null)", entityVar, getter)
+                .addStatement("var geo = $L.$L()", entityVar, getter)
                 .addStatement(
-                        "  var point = org.neo4j.driver.internal.InternalPoint.of(4326, geo.longitude(), geo.latitude());")
-                .addStatement("  params.put($S, point);", property)
-                .addStatement("}")
+                        "var point = org.neo4j.driver.internal.InternalPoint.of(4326, geo.longitude(), geo.latitude())")
+                .addStatement("$L.put($S, point)", mapVar, property)
+                .endControlFlow()
                 .build();
     }
 }

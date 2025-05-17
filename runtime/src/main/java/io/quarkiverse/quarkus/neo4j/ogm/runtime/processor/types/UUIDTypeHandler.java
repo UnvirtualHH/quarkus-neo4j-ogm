@@ -19,7 +19,8 @@ public class UUIDTypeHandler implements TypeHandler {
 
     @Override
     public CodeBlock generateSetterCode(VariableElement field, String targetVar, String valueSource) {
-        return CodeBlock.of("$L.$L($T.fromString($L.get($S).asString()));\n",
+        return CodeBlock.of(
+                "$L.$L($T.fromString($L.get($S).asString()));\n",
                 targetVar,
                 resolveSetterName(field),
                 ClassName.get("java.util", "UUID"),
@@ -28,13 +29,12 @@ public class UUIDTypeHandler implements TypeHandler {
     }
 
     @Override
-    public CodeBlock generateToDbCode(VariableElement field, String entityVar) {
+    public CodeBlock generateToDbCode(VariableElement field, String entityVar, String mapVar) {
         String getter = resolveGetterName(field);
         String setter = resolveSetterName(field);
         String prop = getPropertyName(field);
 
-        boolean isGenerated = field
-                .getAnnotation(GeneratedValue.class) != null;
+        boolean isGenerated = field.getAnnotation(GeneratedValue.class) != null;
 
         CodeBlock.Builder code = CodeBlock.builder();
 
@@ -51,7 +51,7 @@ public class UUIDTypeHandler implements TypeHandler {
         }
 
         code.beginControlFlow("if (id != null)")
-                .addStatement("params.put($S, id.toString())", prop)
+                .addStatement("$L.put($S, id.toString())", mapVar, prop)
                 .endControlFlow();
 
         return code.build();

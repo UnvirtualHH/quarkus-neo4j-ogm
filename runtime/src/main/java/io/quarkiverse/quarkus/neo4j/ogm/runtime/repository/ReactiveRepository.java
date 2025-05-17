@@ -1,14 +1,18 @@
 package io.quarkiverse.quarkus.neo4j.ogm.runtime.repository;
 
+import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
-import org.neo4j.driver.*;
+import org.neo4j.driver.Driver;
 import org.neo4j.driver.Record;
+import org.neo4j.driver.Values;
 import org.neo4j.driver.reactive.ReactiveResult;
 import org.neo4j.driver.reactive.ReactiveSession;
 
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityMapper;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityWithRelations;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationshipData;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 
@@ -17,22 +21,28 @@ public abstract class ReactiveRepository<T> {
     protected final Driver driver;
     protected final String label;
     protected final EntityMapper<T> entityMapper;
+    protected final ReactiveRepositoryRegistry reactiveRegistry;
 
     public ReactiveRepository() {
         this.driver = null;
         this.label = null;
         this.entityMapper = null;
+        this.reactiveRegistry = null;
     }
 
-    public ReactiveRepository(Driver driver, String label, EntityMapper<T> entityMapper) {
+    public ReactiveRepository(Driver driver, String label, EntityMapper<T> entityMapper,
+            ReactiveRepositoryRegistry reactiveRegistry) {
         this.driver = driver;
         this.label = label;
         this.entityMapper = entityMapper;
+        this.reactiveRegistry = reactiveRegistry;
     }
 
     private static Function<ReactiveSession, Uni<Void>> closeSession() {
         return session -> Uni.createFrom().publisher(session.close()).replaceWithVoid();
     }
+
+    protected abstract Class<T> getEntityType();
 
     public Uni<T> findById(Object id) {
         return runReadQuerySingle("MATCH (n:" + label + " {id: $id}) RETURN n AS node", Map.of("id", id));
@@ -47,22 +57,29 @@ public abstract class ReactiveRepository<T> {
     }
 
     public Uni<T> create(T entity) {
-        String cypher = "CREATE (n:" + label + " $props) RETURN n AS node";
-        return runWriteQuerySingle(cypher, Map.of("props", entityMapper.toDb(entity)));
+        EntityWithRelations data = entityMapper.toDb(entity);
+        Object id = entityMapper.getNodeId(entity);
+
+        return runWriteQuerySingle("CREATE (n:" + label + " $props) RETURN n AS node", Map.of("props", data.getProperties()))
+                .flatMap(saved -> persistRelationships(label, id, data.getRelationships()).replaceWith(saved));
     }
 
     public Uni<T> update(T entity) {
-        String cypher = "MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n AS node";
-        return runWriteQuerySingle(cypher, Map.of(
-                "id", entityMapper.getNodeId(entity),
-                "props", entityMapper.toDb(entity)));
+        Object id = entityMapper.getNodeId(entity);
+        EntityWithRelations data = entityMapper.toDb(entity);
+
+        return runWriteQuerySingle("MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
+                Map.of("id", id, "props", data.getProperties()))
+                .flatMap(updated -> persistRelationships(label, id, data.getRelationships()).replaceWith(updated));
     }
 
     public Uni<T> merge(T entity) {
-        String cypher = "MERGE (n:" + label + " {id: $id}) SET n += $props RETURN n AS node";
-        return runWriteQuerySingle(cypher, Map.of(
-                "id", entityMapper.getNodeId(entity),
-                "props", entityMapper.toDb(entity)));
+        Object id = entityMapper.getNodeId(entity);
+        EntityWithRelations data = entityMapper.toDb(entity);
+
+        return runWriteQuerySingle("MERGE (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
+                Map.of("id", id, "props", data.getProperties()))
+                .flatMap(merged -> persistRelationships(label, id, data.getRelationships()).replaceWith(merged));
     }
 
     public Uni<Void> delete(T entity) {
@@ -70,13 +87,12 @@ public abstract class ReactiveRepository<T> {
     }
 
     public Uni<Void> deleteById(Object id) {
-        String cypher = "MATCH (n:" + label + " {id: $id}) DELETE n";
-        return runWriteQueryVoid(cypher, Map.of("id", id));
+        return runWriteQueryVoid("MATCH (n:" + label + " {id: $id}) DELETE n", Map.of("id", id));
     }
 
     public Uni<Boolean> existsById(Object id) {
-        String cypher = "MATCH (n:" + label + " {id: $id}) RETURN count(n) > 0 AS exists";
-        return runScalarReadQuery(cypher, Map.of("id", id), r -> r.get("exists").asBoolean());
+        return runScalarReadQuery("MATCH (n:" + label + " {id: $id}) RETURN count(n) > 0 AS exists",
+                Map.of("id", id), r -> r.get("exists").asBoolean());
     }
 
     public Uni<Boolean> exists(T entity) {
@@ -92,7 +108,7 @@ public abstract class ReactiveRepository<T> {
     }
 
     public Uni<T> querySingle(String cypher) {
-        return runWriteQuerySingle(cypher, Map.of());
+        return querySingle(cypher, Map.of());
     }
 
     public Uni<T> querySingle(String cypher, Map<String, Object> params) {
@@ -108,8 +124,7 @@ public abstract class ReactiveRepository<T> {
     }
 
     private Multi<T> runReadQuery(String cypher, Map<String, Object> params) {
-        return runQueryInternal(cypher, params, true)
-                .map(r -> entityMapper.map(r, "node"));
+        return runQueryInternal(cypher, params, true).map(r -> entityMapper.map(r, "node"));
     }
 
     private Uni<T> runReadQuerySingle(String cypher, Map<String, Object> params) {
@@ -161,17 +176,63 @@ public abstract class ReactiveRepository<T> {
                 () -> driver.session(ReactiveSession.class),
                 session -> {
                     if (readOnly) {
-                        return session.executeRead(tx -> {
-                            var result = tx.run(cypher, Values.value(params));
-                            return Multi.createFrom().publisher(result).flatMap(ReactiveResult::records);
-                        });
+                        return session.executeRead(tx -> Multi.createFrom().publisher(tx.run(cypher, Values.value(params)))
+                                .flatMap(ReactiveResult::records));
                     } else {
-                        return session.executeWrite(tx -> {
-                            var result = tx.run(cypher, Values.value(params));
-                            return Multi.createFrom().publisher(result).flatMap(ReactiveResult::records);
-                        });
+                        return session.executeWrite(tx -> Multi.createFrom().publisher(tx.run(cypher, Values.value(params)))
+                                .flatMap(ReactiveResult::records));
                     }
                 })
                 .withFinalizer(closeSession());
+    }
+
+    private Uni<Void> persistRelationships(String label, Object fromId, List<RelationshipData> relationships) {
+        if (relationships == null || relationships.isEmpty()) {
+            return Uni.createFrom().voidItem();
+        }
+
+        return Multi.createFrom().iterable(relationships)
+                .onItem().transformToUniAndMerge(rel -> {
+                    Object toId = rel.getTargetId();
+                    if (toId == null && rel.getTargetEntity() != null) {
+                        Object target = rel.getTargetEntity();
+                        Class<?> targetType = target.getClass();
+                        ReactiveRepository<Object> targetRepo = (ReactiveRepository<Object>) reactiveRegistry
+                                .getReactiveRepository(targetType);
+                        Object id = targetRepo.getEntityMapper().getNodeId(target);
+                        Uni<Object> idUni = id == null
+                                ? targetRepo.create(target).map(saved -> targetRepo.getEntityMapper().getNodeId(saved))
+                                : Uni.createFrom().item(id);
+
+                        return idUni.invoke(rel::setTargetId).replaceWithVoid();
+                    }
+                    return Uni.createFrom().voidItem();
+                })
+                .collect().asList()
+                .flatMap(list -> {
+                    return Multi.createFrom().iterable(relationships)
+                            .onItem().transformToUniAndMerge(rel -> {
+                                Object toId = rel.getTargetId();
+                                if (toId == null)
+                                    return Uni.createFrom().voidItem();
+                                String query = switch (rel.getDirection()) {
+                                    case OUTGOING ->
+                                        "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)-[r:" + rel.getType()
+                                                + "]->(b)";
+                                    case INCOMING ->
+                                        "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)<-[r:" + rel.getType()
+                                                + "]-(b)";
+                                    default ->
+                                        throw new UnsupportedOperationException("Unsupported direction: " + rel.getDirection());
+                                };
+                                return runWriteQueryVoid(query, Map.of("from", fromId, "to", toId));
+                            })
+                            .collect().asList()
+                            .replaceWithVoid();
+                });
+    }
+
+    public EntityMapper<T> getEntityMapper() {
+        return entityMapper;
     }
 }

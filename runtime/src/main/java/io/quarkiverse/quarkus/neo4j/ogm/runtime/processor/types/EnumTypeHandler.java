@@ -27,7 +27,8 @@ public class EnumTypeHandler implements TypeHandler {
                 ? "values()[%s.get($S).asInt()]"
                 : "valueOf(%s.get($S).asString())";
 
-        return CodeBlock.of("$L.$L($T." + accessor + ");\n",
+        return CodeBlock.of(
+                "$L.$L($T." + accessor + ");\n",
                 targetVar,
                 resolveSetterName(field),
                 enumType,
@@ -36,14 +37,16 @@ public class EnumTypeHandler implements TypeHandler {
     }
 
     @Override
-    public CodeBlock generateToDbCode(VariableElement field, String entityVar) {
+    public CodeBlock generateToDbCode(VariableElement field, String entityVar, String mapVar) {
         Enumerated enumerated = field.getAnnotation(Enumerated.class);
         String getter = resolveGetterName(field);
         String method = enumerated.value() == EnumType.ORDINAL ? "ordinal" : "name";
 
-        return CodeBlock.of("if ($L.$L() != null) params.put($S, $L.$L().$L());\n",
+        return CodeBlock.of(
+                "if ($L.$L() != null) $L.put($S, $L.$L().$L());\n",
                 entityVar,
                 getter,
+                mapVar,
                 getPropertyName(field),
                 entityVar,
                 getter,

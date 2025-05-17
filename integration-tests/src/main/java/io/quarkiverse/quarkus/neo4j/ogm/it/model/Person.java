@@ -1,7 +1,9 @@
 package io.quarkiverse.quarkus.neo4j.ogm.it.model;
 
+import java.util.List;
 import java.util.UUID;
 
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Direction;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
 
 @NodeEntity(label = "Person")
@@ -14,6 +16,12 @@ public class Person {
 
     @Property(name = "name")
     private String name;
+
+    @Relationship(type = "follows", direction = Direction.OUTGOING)
+    private List<Person> following;
+
+    @Relationship(type = "located_in", direction = Direction.OUTGOING)
+    private Address address;
 
     public UUID getId() {
         return id;
@@ -29,5 +37,21 @@ public class Person {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public List<Person> getFollowing() {
+        return following;
+    }
+
+    public void setFollowing(List<Person> following) {
+        this.following = following;
+    }
+
+    public Address getAddress() {
+        return address;
+    }
+
+    public void setAddress(Address address) {
+        this.address = address;
     }
 }
