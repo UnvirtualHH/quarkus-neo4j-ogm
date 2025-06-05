@@ -29,4 +29,18 @@ public class MapperUtil {
                 ? field.getSimpleName().toString()
                 : (prop != null && !prop.name().isEmpty()) ? prop.name() : field.getSimpleName().toString();
     }
+
+    public static String getFieldType(VariableElement field) {
+        String rawType = field.asType().toString();
+
+        if (rawType.startsWith("java.util.List") || rawType.startsWith("java.util.Set")) {
+            int start = rawType.indexOf('<');
+            int end = rawType.indexOf('>');
+            if (start != -1 && end != -1 && end > start) {
+                return rawType.substring(start + 1, end);
+            }
+        }
+
+        return rawType;
+    }
 }

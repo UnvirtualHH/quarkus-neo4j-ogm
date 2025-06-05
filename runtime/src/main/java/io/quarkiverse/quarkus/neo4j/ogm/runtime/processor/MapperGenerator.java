@@ -42,6 +42,7 @@ public class MapperGenerator {
                 .addMethod(mapMethod)
                 .addMethod(toDbMethod)
                 .addMethod(getNodeIdMethod)
+                .addMethod(generateSetRelationMethod(entityType, processingEnv))
                 .build();
 
         JavaFile javaFile = JavaFile.builder(packageName, mapperClass).build();
@@ -167,6 +168,59 @@ public class MapperGenerator {
             }
         }
         throw new IllegalStateException("No field annotated with @NodeId found in " + entityType.getSimpleName());
+    }
+
+    private MethodSpec generateSetRelationMethod(TypeElement entityType, ProcessingEnvironment env) {
+        List<VariableElement> relationshipFields = ElementFilter.fieldsIn(entityType.getEnclosedElements())
+                .stream()
+                .filter(f -> f.getAnnotation(Relationship.class) != null)
+                .toList();
+
+        MethodSpec.Builder builder = MethodSpec.methodBuilder("setRelation")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
+                .addParameter(TypeName.get(entityType.asType()), "entity")
+                .addParameter(String.class, "relationType")
+                .addParameter(ClassName.get(Object.class), "relatedEntity");
+
+        if (relationshipFields.isEmpty()) {
+            builder.addStatement("// no relationships");
+            return builder.build();
+        }
+
+        builder.beginControlFlow("switch (relationType)");
+
+        for (VariableElement field : relationshipFields) {
+            Relationship rel = field.getAnnotation(Relationship.class);
+            String relType = rel.type();
+            String setterName = MapperUtil.resolveSetterName(field);
+            String getterName = MapperUtil.resolveGetterName(field);
+            boolean isCollection = field.asType().toString().startsWith("java.util.List");
+            String targetTypeName = MapperUtil.getFieldType(field);
+
+            builder.beginControlFlow("case $S ->", relType);
+
+            if (isCollection) {
+                builder.beginControlFlow("if (entity.$L() == null)", getterName)
+                        .addStatement("entity.$L(new $T<>())", setterName, ClassName.get("java.util", "ArrayList"))
+                        .endControlFlow()
+                        .addStatement("entity.$L().add(($T) relatedEntity)", getterName, ClassName.bestGuess(targetTypeName));
+            } else {
+                builder.addStatement("entity.$L(($T) relatedEntity)", setterName, ClassName.bestGuess(targetTypeName));
+            }
+
+            builder.addStatement("break");
+            builder.endControlFlow();
+        }
+
+        builder.beginControlFlow("default ->")
+                .addStatement("// ignore unknown relation")
+                .addStatement("break")
+                .endControlFlow();
+
+        builder.endControlFlow();
+
+        return builder.build();
     }
 
     private boolean shouldIncludeField(VariableElement field) {

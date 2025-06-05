@@ -22,6 +22,7 @@ public class EntityMapperProcessor extends AbstractProcessor {
     private MapperGenerator mapperGenerator;
     private final RepositoryGenerator repositoryGenerator = new RepositoryGenerator();
     private final ReactiveRepositoryGenerator reactiveRepositoryGenerator = new ReactiveRepositoryGenerator();
+    private final RelationLoaderGenerator relationLoaderGenerator = new RelationLoaderGenerator();
 
     private final Set<String> generatedClasses = new HashSet<>();
 
@@ -77,6 +78,24 @@ public class EntityMapperProcessor extends AbstractProcessor {
                 if (generatedClasses.add(reactiveFQN)) {
                     reactiveRepositoryGenerator.generateReactiveRepository(packageName, entityType, reactiveClassName,
                             mapperClassName, label, processingEnv);
+                }
+            }
+
+            // Generate RelationLoader for the entity if it has relationships
+            String loaderClassName = entityName + "RelationLoader";
+            String loaderFQN = packageName + "." + loaderClassName;
+            if (generatedClasses.add(loaderFQN)) {
+                if (repoType == GenerateRepository.RepositoryType.BOTH) {
+                    // Generate both imperative and reactive loaders
+                    relationLoaderGenerator.generateRelationLoader(packageName, entityType, entityName + "RelationLoader",
+                            processingEnv,
+                            GenerateRepository.RepositoryType.BLOCKING);
+                    relationLoaderGenerator.generateRelationLoader(packageName, entityType,
+                            entityName + "ReactiveRelationLoader", processingEnv,
+                            GenerateRepository.RepositoryType.REACTIVE);
+                } else {
+                    relationLoaderGenerator.generateRelationLoader(packageName, entityType, loaderClassName, processingEnv,
+                            repoType);
                 }
             }
         }

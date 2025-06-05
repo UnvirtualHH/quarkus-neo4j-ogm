@@ -12,6 +12,7 @@ import org.neo4j.driver.reactive.ReactiveSession;
 
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityMapper;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityWithRelations;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationLoader;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationshipData;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
@@ -22,12 +23,14 @@ public abstract class ReactiveRepository<T> {
     protected final String label;
     protected final EntityMapper<T> entityMapper;
     protected final ReactiveRepositoryRegistry reactiveRegistry;
+    protected RelationLoader<T> relationLoader;
 
     public ReactiveRepository() {
         this.driver = null;
         this.label = null;
         this.entityMapper = null;
         this.reactiveRegistry = null;
+        this.relationLoader = null;
     }
 
     public ReactiveRepository(Driver driver, String label, EntityMapper<T> entityMapper,
@@ -36,6 +39,7 @@ public abstract class ReactiveRepository<T> {
         this.label = label;
         this.entityMapper = entityMapper;
         this.reactiveRegistry = reactiveRegistry;
+        this.relationLoader = null;
     }
 
     private static Function<ReactiveSession, Uni<Void>> closeSession() {
@@ -45,7 +49,8 @@ public abstract class ReactiveRepository<T> {
     protected abstract Class<T> getEntityType();
 
     public Uni<T> findById(Object id) {
-        return runReadQuerySingle("MATCH (n:" + label + " {id: $id}) RETURN n AS node", Map.of("id", id));
+        return runReadQuerySingle("MATCH (n:" + label + " {id: $id}) RETURN n AS node", Map.of("id", id))
+                .flatMap(entity -> loadRelations(entity).replaceWith(entity));
     }
 
     public Multi<T> findAll() {
@@ -230,6 +235,27 @@ public abstract class ReactiveRepository<T> {
                             .collect().asList()
                             .replaceWithVoid();
                 });
+    }
+
+    /**
+     * Loads all relationships for the given entity.
+     *
+     * @param entity The entity to load relationships for
+     * @return A Uni that completes when all relationships are loaded
+     */
+    protected Uni<Void> loadRelations(T entity) {
+        if (entity == null || relationLoader == null) {
+            return Uni.createFrom().voidItem();
+        }
+
+        Object id = entityMapper.getNodeId(entity);
+        if (id == null) {
+            return Uni.createFrom().voidItem();
+        }
+
+        return Uni.createFrom().voidItem()
+                .invoke(() -> relationLoader.loadRelations(entity))
+                .emitOn(java.util.concurrent.Executors.newSingleThreadExecutor());
     }
 
     public EntityMapper<T> getEntityMapper() {

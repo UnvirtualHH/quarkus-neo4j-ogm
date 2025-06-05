@@ -10,6 +10,7 @@ import org.neo4j.driver.Record;
 
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityMapper;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityWithRelations;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationLoader;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationshipData;
 
 public abstract class Repository<T> {
@@ -18,12 +19,14 @@ public abstract class Repository<T> {
     protected final String label;
     protected final EntityMapper<T> entityMapper;
     protected final RepositoryRegistry registry;
+    protected RelationLoader<T> relationLoader;
 
     public Repository() {
         this.driver = null;
         this.label = null;
         this.entityMapper = null;
         this.registry = null;
+        this.relationLoader = null;
     }
 
     public Repository(Driver driver, String label, EntityMapper<T> entityMapper, RepositoryRegistry registry) {
@@ -31,6 +34,7 @@ public abstract class Repository<T> {
         this.label = label;
         this.entityMapper = entityMapper;
         this.registry = registry;
+        this.relationLoader = null; // Will be set by the generated repository
     }
 
     protected abstract Class<T> getEntityType();
@@ -58,7 +62,9 @@ public abstract class Repository<T> {
         return inWriteTx(tx -> {
             var result = tx.run("MATCH (n:" + label + " {id: $id}) RETURN n AS node",
                     Values.parameters("id", id));
-            return entityMapper.map(result.single(), "node");
+            T entity = entityMapper.map(result.single(), "node");
+            loadRelations(tx, entity);
+            return entity;
         });
     }
 
@@ -216,5 +222,28 @@ public abstract class Repository<T> {
 
     public EntityMapper<T> getEntityMapper() {
         return entityMapper;
+    }
+
+    /**
+     * Loads all relationships for the given entity.
+     *
+     * @param tx The current transaction
+     * @param entity The entity to load relationships for
+     */
+    protected void loadRelations(Transaction tx, T entity) {
+        if (entity == null || relationLoader == null) {
+            return;
+        }
+
+        Object id = entityMapper.getNodeId(entity);
+        if (id == null) {
+            return;
+        }
+
+        try {
+            relationLoader.loadRelations(entity);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to load relationships for entity: " + entity, e);
+        }
     }
 }

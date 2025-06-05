@@ -25,4 +25,6 @@ public interface EntityMapper<T> {
      * @return The node ID of the entity.
      */
     Object getNodeId(T entity);
+
+    void setRelation(T entity, String relationType, Object relatedEntity);
 }

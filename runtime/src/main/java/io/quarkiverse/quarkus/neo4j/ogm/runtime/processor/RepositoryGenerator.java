@@ -37,15 +37,30 @@ public class RepositoryGenerator {
                 .addModifiers(Modifier.PUBLIC)
                 .build();
 
-        MethodSpec constructor = MethodSpec.constructorBuilder()
+        // Check if the entity has relationships
+        boolean hasRelationships = entityType.getEnclosedElements().stream()
+                .anyMatch(e -> e.getAnnotation(io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.Relationship.class) != null);
+
+        // Build constructor with RelationLoader if needed
+        MethodSpec.Builder constructorBuilder = MethodSpec.constructorBuilder()
                 .addAnnotation(Inject.class)
                 .addModifiers(Modifier.PUBLIC)
                 .addParameter(ClassName.get("org.neo4j.driver", "Driver"), "driver")
                 .addParameter(ClassName.get(packageName, mapperClassName), "entityMapper")
                 .addParameter(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "RepositoryRegistry"),
-                        "registry")
-                .addStatement("super(driver, $S, entityMapper, registry)", label)
-                .build();
+                        "registry");
+
+        if (hasRelationships) {
+            String loaderClassName = entityType.getSimpleName() + "RelationLoader";
+            constructorBuilder
+                    .addParameter(ClassName.get(packageName, loaderClassName), "relationLoader")
+                    .addStatement("super(driver, $S, entityMapper, registry)", label)
+                    .addStatement("this.relationLoader = relationLoader");
+        } else {
+            constructorBuilder.addStatement("super(driver, $S, entityMapper, registry)", label);
+        }
+
+        MethodSpec constructor = constructorBuilder.build();
 
         TypeSpec.Builder repositoryClassBuilder = TypeSpec.classBuilder(repositoryClassName)
                 .addAnnotation(ApplicationScoped.class)

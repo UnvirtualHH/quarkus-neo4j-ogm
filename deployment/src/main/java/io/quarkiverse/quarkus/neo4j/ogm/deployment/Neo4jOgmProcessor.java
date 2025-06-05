@@ -20,5 +20,6 @@ class Neo4jOgmProcessor {
     void registerBeans(BuildProducer<AdditionalBeanBuildItem> additionalBeans) {
         additionalBeans.produce(new AdditionalBeanBuildItem(RepositoryRegistry.class));
         additionalBeans.produce(new AdditionalBeanBuildItem(ReactiveRepositoryRegistry.class));
+
     }
 }
