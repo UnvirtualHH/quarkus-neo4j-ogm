@@ -230,7 +230,7 @@ public class RelationLoaderGenerator {
     private String buildQuery(Direction direction, String relationType, String label, boolean limit) {
         String left = direction == Direction.INCOMING ? "<-" : "-";
         String right = direction == Direction.OUTGOING ? "->" : "-";
-        String base = String.format("MATCH (n) WHERE id(n) = $id MATCH (n)%s[:%s]%s(m:%s) RETURN m", left, relationType, right,
+        String base = String.format("MATCH (n {id: $id})%s[:%s]%s(m:%s) RETURN m as node", left, relationType, right,
                 label);
         return limit ? base + " LIMIT 1" : base;
     }

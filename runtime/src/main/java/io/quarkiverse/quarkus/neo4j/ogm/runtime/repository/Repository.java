@@ -71,7 +71,9 @@ public abstract class Repository<T> {
     public List<T> findAll() {
         return inWriteTx(tx -> {
             var result = tx.run("MATCH (n:" + label + ") RETURN n AS node");
-            return result.list(r -> entityMapper.map(r, "node"));
+            List<T> entities = result.list(r -> entityMapper.map(r, "node"));
+            entities.forEach(entity -> loadRelations(tx, entity));
+            return entities;
         });
     }
 
@@ -160,8 +162,12 @@ public abstract class Repository<T> {
     }
 
     public List<T> query(String cypher, Map<String, Object> parameters) {
-        return inWriteTx(tx -> tx.run(cypher, Values.value(parameters))
-                .list(r -> entityMapper.map(r, "node")));
+        return inWriteTx(tx -> {
+            List<T> results = tx.run(cypher, Values.value(parameters))
+                    .list(r -> entityMapper.map(r, "node"));
+            results.forEach(entity -> loadRelations(tx, entity));
+            return results;
+        });
     }
 
     public T querySingle(String cypher) {
@@ -169,8 +175,11 @@ public abstract class Repository<T> {
     }
 
     public T querySingle(String cypher, Map<String, Object> parameters) {
-        return inWriteTx(tx -> entityMapper.map(
-                tx.run(cypher, Values.value(parameters)).single(), "node"));
+        return inWriteTx(tx -> {
+            T entity = entityMapper.map(tx.run(cypher, Values.value(parameters)).single(), "node");
+            loadRelations(tx, entity);
+            return entity;
+        });
     }
 
     public void execute(String cypher, Map<String, Object> parameters) {

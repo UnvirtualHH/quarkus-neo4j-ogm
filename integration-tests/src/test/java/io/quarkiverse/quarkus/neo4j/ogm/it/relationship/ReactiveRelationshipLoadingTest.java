@@ -10,24 +10,25 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.Session;
+import org.neo4j.driver.Values;
 
 import io.quarkiverse.quarkus.neo4j.ogm.it.model.Author;
-import io.quarkiverse.quarkus.neo4j.ogm.it.model.AuthorBaseRepository;
+import io.quarkiverse.quarkus.neo4j.ogm.it.model.AuthorBaseReactiveRepository;
 import io.quarkiverse.quarkus.neo4j.ogm.it.model.Book;
-import io.quarkiverse.quarkus.neo4j.ogm.it.model.BookBaseRepository;
+import io.quarkiverse.quarkus.neo4j.ogm.it.model.BookBaseReactiveRepository;
 import io.quarkus.test.junit.QuarkusTest;
 
 @QuarkusTest
-public class RelationshipLoadingTest {
+public class ReactiveRelationshipLoadingTest {
 
     @Inject
     Driver driver;
 
     @Inject
-    AuthorBaseRepository authorRepository;
+    AuthorBaseReactiveRepository authorRepository;
 
     @Inject
-    BookBaseRepository bookRepository;
+    BookBaseReactiveRepository bookRepository;
 
     @BeforeEach
     public void clearDatabase() {
@@ -42,12 +43,11 @@ public class RelationshipLoadingTest {
         String authorId = createTestAuthorWithBooks();
 
         // When
-        Author author = authorRepository.findById(authorId);
+        Author author = authorRepository.findById(authorId).await().indefinitely();
 
         // Then
         assertNotNull(author);
         assertNotNull(author.getBooks());
-        assertFalse(author.getBooks().isEmpty());
         assertEquals(2, author.getBooks().size());
         assertTrue(author.getBooks().stream().anyMatch(b -> "Book 1".equals(b.getTitle())));
         assertTrue(author.getBooks().stream().anyMatch(b -> "Book 2".equals(b.getTitle())));
@@ -59,9 +59,12 @@ public class RelationshipLoadingTest {
         String authorId = createTestAuthorWithBooks();
 
         // When
-        Book book = bookRepository.findByTitle("Book 1");
+        Book book = bookRepository.querySingle("MATCH (b:Book {title: $title}) RETURN b AS node",
+                Values.parameters("title", "Book 1").asMap())
+                .await().indefinitely();
 
         // Then
+        assertNotNull(book);
         assertNotNull(book.getAuthor());
         assertEquals(authorId, book.getAuthor().getId());
     }

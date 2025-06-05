@@ -54,7 +54,8 @@ public abstract class ReactiveRepository<T> {
     }
 
     public Multi<T> findAll() {
-        return runReadQuery("MATCH (n:" + label + ") RETURN n AS node", Map.of());
+        return runReadQuery("MATCH (n:" + label + ") RETURN n AS node", Map.of())
+                .onItem().transformToUniAndMerge(entity -> loadRelations(entity).replaceWith(entity));
     }
 
     public Uni<Long> count() {
@@ -109,7 +110,8 @@ public abstract class ReactiveRepository<T> {
     }
 
     public Multi<T> query(String cypher, Map<String, Object> params) {
-        return runReadQuery(cypher, params);
+        return runReadQuery(cypher, params)
+                .onItem().transformToUniAndMerge(entity -> loadRelations(entity).replaceWith(entity));
     }
 
     public Uni<T> querySingle(String cypher) {
@@ -117,7 +119,8 @@ public abstract class ReactiveRepository<T> {
     }
 
     public Uni<T> querySingle(String cypher, Map<String, Object> params) {
-        return runWriteQuerySingle(cypher, params);
+        return runWriteQuerySingle(cypher, params)
+                .flatMap(entity -> loadRelations(entity).replaceWith(entity));
     }
 
     public <R> Uni<R> queryScalar(String cypher, Map<String, Object> params, Function<Record, R> mapper) {

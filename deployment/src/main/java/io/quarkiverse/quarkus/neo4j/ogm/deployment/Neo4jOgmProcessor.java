@@ -18,8 +18,8 @@ class Neo4jOgmProcessor {
 
     @BuildStep
     void registerBeans(BuildProducer<AdditionalBeanBuildItem> additionalBeans) {
-        additionalBeans.produce(new AdditionalBeanBuildItem(RepositoryRegistry.class));
-        additionalBeans.produce(new AdditionalBeanBuildItem(ReactiveRepositoryRegistry.class));
+        additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(RepositoryRegistry.class));
+        additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(ReactiveRepositoryRegistry.class));
 
     }
 }
