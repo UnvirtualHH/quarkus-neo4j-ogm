@@ -8,5 +8,5 @@ import io.smallrye.mutiny.Uni;
  * @param <T> entity type
  */
 public interface ReactiveRelationLoader<T> {
-    Uni<Void> loadRelations(T entity);
+    Uni<T> loadRelations(T entity);
 }

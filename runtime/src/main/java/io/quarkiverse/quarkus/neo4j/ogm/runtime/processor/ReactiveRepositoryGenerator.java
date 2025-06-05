@@ -52,7 +52,7 @@ public class ReactiveRepositoryGenerator {
                         "reactiveRegistry");
 
         if (hasRelationships) {
-            String loaderClassName = entityType.getSimpleName() + "RelationLoader";
+            String loaderClassName = entityType.getSimpleName() + "ReactiveRelationLoader";
             constructorBuilder
                     .addParameter(ClassName.get(packageName, loaderClassName), "relationLoader")
                     .addStatement("super(driver, $S, entityMapper, reactiveRegistry)", label)

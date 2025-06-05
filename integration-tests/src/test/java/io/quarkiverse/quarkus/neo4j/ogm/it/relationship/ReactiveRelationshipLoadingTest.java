@@ -66,7 +66,7 @@ public class ReactiveRelationshipLoadingTest {
         // Then
         assertNotNull(book);
         assertNotNull(book.getAuthor());
-        assertEquals(authorId, book.getAuthor().getId());
+        assertEquals(UUID.fromString(authorId), book.getAuthor().getId());
     }
 
     private String createTestAuthorWithBooks() {

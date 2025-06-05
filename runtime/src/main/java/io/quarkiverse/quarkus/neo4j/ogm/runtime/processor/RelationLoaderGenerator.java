@@ -2,6 +2,7 @@ package io.quarkiverse.quarkus.neo4j.ogm.runtime.processor;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import javax.annotation.processing.ProcessingEnvironment;
@@ -17,10 +18,7 @@ import javax.tools.Diagnostic;
 import com.palantir.javapoet.*;
 
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Direction;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.GenerateRepository;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.ReactiveRelationLoader;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationLoader;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.Relationship;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
 
 public class RelationLoaderGenerator {
 
@@ -93,61 +91,102 @@ public class RelationLoaderGenerator {
 
     private MethodSpec.Builder buildReactiveLoader(TypeElement entityType, String qualifiedName, Types types,
             TypeMirror listType) {
+
+        NodeEntity nodeAnnotation = entityType.getAnnotation(NodeEntity.class);
+        String sourceLabel = (nodeAnnotation != null && !nodeAnnotation.label().isEmpty())
+                ? nodeAnnotation.label()
+                : entityType.getSimpleName().toString();
+
         MethodSpec.Builder builder = MethodSpec.methodBuilder("loadRelations")
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
-                .returns(ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"), ClassName.get(Void.class)))
+                .returns(ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
+                        ClassName.bestGuess(qualifiedName)))
                 .addParameter(ClassName.bestGuess(qualifiedName), "entity")
                 .addStatement("Object id = getNodeId(entity)")
                 .beginControlFlow("if (id == null)")
-                .addStatement("return $T.createFrom().voidItem()", ClassName.get("io.smallrye.mutiny", "Uni"))
+                .addStatement("return $T.createFrom().item(entity)", ClassName.get("io.smallrye.mutiny", "Uni"))
                 .endControlFlow();
 
-        CodeBlock.Builder uniChain = CodeBlock.builder();
-        boolean first = true;
+        List<String> uniVars = new ArrayList<>();
+        CodeBlock.Builder unis = CodeBlock.builder();
+        CodeBlock.Builder mapping = CodeBlock.builder();
+        boolean hasRelations = false;
+        int index = 1;
 
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             Relationship rel = field.getAnnotation(Relationship.class);
             if (rel == null)
                 continue;
 
-            String getter = resolveGetterName(field);
+            hasRelations = true;
             String setter = resolveSetterName(field);
+            String getter = resolveGetterName(field);
+
             String fieldType = field.asType().toString();
             boolean isList = types.isAssignable(field.asType(), types.erasure(listType));
+
             String relatedType = isList
                     ? fieldType.substring(fieldType.indexOf('<') + 1, fieldType.lastIndexOf('>'))
                     : fieldType;
-            String relatedSimple = relatedType.contains(".") ? relatedType.substring(relatedType.lastIndexOf('.') + 1)
+            String relatedSimple = relatedType.contains(".")
+                    ? relatedType.substring(relatedType.lastIndexOf('.') + 1)
                     : relatedType;
-            String query = buildQuery(rel.direction(), rel.type(), relatedSimple, !isList);
 
-            if (!first)
-                uniChain.add(".chain(() -> ");
-            else
-                uniChain.add("return ");
-
-            uniChain.add("reactiveRegistry.getReactiveRepository($T.class).query($S, $T.of(\"id\", id))",
-                    ClassName.bestGuess(relatedType), query, ClassName.get(Map.class));
+            String query = buildQuery(sourceLabel, rel.direction(), rel.type(), relatedSimple);
+            String uniVar = "u" + index;
+            uniVars.add(uniVar);
 
             if (isList) {
-                uniChain.add(
-                        ".collect().asList().invoke(list -> { if (entity.$L() == null) entity.$L(new $T<>()); entity.$L().addAll(list); })",
-                        getter, setter, ArrayList.class, getter);
+                unis.addStatement(
+                        "$T $L = reactiveRegistry.getReactiveRepository($T.class).query($S, $T.of(\"id\", id)).collect().asList()",
+                        ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
+                                ParameterizedTypeName.get(ClassName.get(List.class), ClassName.bestGuess(relatedType))),
+                        uniVar,
+                        ClassName.bestGuess(relatedType),
+                        query,
+                        ClassName.get(Map.class));
+
+                mapping.addStatement("entity.$L(new $T<>())", setter, ArrayList.class);
+                mapping.addStatement("entity.$L().addAll(tuple.getItem$L())", getter, index);
             } else {
-                uniChain.add(".collect().first().invoke(related -> entity.$L(related))", setter);
+                unis.addStatement("$T $L = reactiveRegistry.getReactiveRepository($T.class).querySingle($S, $T.of(\"id\", id))",
+                        ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
+                                ClassName.bestGuess(relatedType)),
+                        uniVar,
+                        ClassName.bestGuess(relatedType),
+                        query,
+                        ClassName.get(Map.class));
+
+                mapping.addStatement("entity.$L(tuple.getItem$L())", setter, index);
             }
 
-            uniChain.add(".replaceWithVoid()");
-            if (!first)
-                uniChain.add(")");
-            first = false;
+            index++;
         }
 
-        if (first) {
-            builder.addStatement("return $T.createFrom().voidItem()", ClassName.get("io.smallrye.mutiny", "Uni"));
+        if (!hasRelations) {
+            builder.addStatement("return $T.createFrom().item(entity)", ClassName.get("io.smallrye.mutiny", "Uni"));
+            return builder;
+        }
+
+        builder.addCode(unis.build());
+
+        if (uniVars.size() == 1) {
+            String setterCode = mapping.build().toString()
+                    .replace("tuple.getItem1()", "result")
+                    .replace("tuple", "result"); // safety net
+
+            builder.addStatement("return $L.map(result -> {\n$L\n    return entity;\n})",
+                    uniVars.getFirst(),
+                    indent(setterCode, 1));
         } else {
-            builder.addCode(uniChain.build()).addStatement("");
+            // multiple – use combine().all().unis(...).asTuple()
+            builder.addCode("return $T.combine().all().unis(", ClassName.get("io.smallrye.mutiny", "Uni"));
+            builder.addCode(String.join(", ", uniVars));
+            builder.addCode(").asTuple().map(tuple -> {\n");
+            builder.addCode(indent(mapping.build().toString(), 1));
+            builder.addCode("    return entity;\n");
+            builder.addCode("});\n");
         }
 
         return builder;
@@ -180,6 +219,12 @@ public class RelationLoaderGenerator {
 
     private MethodSpec.Builder buildImperativeLoader(TypeElement entityType, String qualifiedName, Types types,
             TypeMirror listType) {
+
+        NodeEntity nodeAnnotation = entityType.getAnnotation(NodeEntity.class);
+        String sourceLabel = (nodeAnnotation != null && !nodeAnnotation.label().isEmpty())
+                ? nodeAnnotation.label()
+                : entityType.getSimpleName().toString();
+
         MethodSpec.Builder builder = MethodSpec.methodBuilder("loadRelations")
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
@@ -202,21 +247,21 @@ public class RelationLoaderGenerator {
                     : fieldType;
             String relatedSimple = relatedType.contains(".") ? relatedType.substring(relatedType.lastIndexOf('.') + 1)
                     : relatedType;
-            String query = buildQuery(rel.direction(), rel.type(), relatedSimple, !isList);
+
+            String query = buildQuery(sourceLabel, rel.direction(), rel.type(), relatedSimple);
 
             builder.addComment("Loading relation $L", field.getSimpleName());
             builder.beginControlFlow("try");
             builder.addStatement("var repository = registry.getRepository($T.class)", ClassName.bestGuess(relatedType));
             builder.addStatement("String query = $S", query);
-            builder.addStatement("var results = repository.query(query, $T.of(\"id\", id))", Map.class);
 
             if (isList) {
+                builder.addStatement("var results = repository.query(query, $T.of(\"id\", id))", Map.class);
                 builder.addStatement("if (entity.$L() == null) entity.$L(new $T<>())", getter, setter, ArrayList.class);
                 builder.addStatement("entity.$L().addAll(results)", getter);
             } else {
-                builder.beginControlFlow("if (!results.isEmpty())")
-                        .addStatement("entity.$L(results.get(0))", setter)
-                        .endControlFlow();
+                builder.addStatement("var result = repository.querySingle(query, $T.of(\"id\", id))", Map.class);
+                builder.addStatement("entity.$L(result)", setter);
             }
 
             builder.nextControlFlow("catch (Exception e)")
@@ -227,12 +272,11 @@ public class RelationLoaderGenerator {
         return builder;
     }
 
-    private String buildQuery(Direction direction, String relationType, String label, boolean limit) {
+    private String buildQuery(String sourceLabel, Direction direction, String relationType, String targetLabel) {
         String left = direction == Direction.INCOMING ? "<-" : "-";
         String right = direction == Direction.OUTGOING ? "->" : "-";
-        String base = String.format("MATCH (n {id: $id})%s[:%s]%s(m:%s) RETURN m as node", left, relationType, right,
-                label);
-        return limit ? base + " LIMIT 1" : base;
+        return String.format("MATCH (n:%s {id: $id})%s[:%s]%s(m:%s) RETURN m as node",
+                sourceLabel, left, relationType, right, targetLabel);
     }
 
     private String resolveGetterName(VariableElement field) {
@@ -243,5 +287,12 @@ public class RelationLoaderGenerator {
     private String resolveSetterName(VariableElement field) {
         String name = field.getSimpleName().toString();
         return "set" + Character.toUpperCase(name.charAt(0)) + name.substring(1);
+    }
+
+    private String indent(String code, int level) {
+        String indent = "    ".repeat(level);
+        return code.lines()
+                .map(line -> indent + line)
+                .reduce("", (a, b) -> a + b + "\n");
     }
 }

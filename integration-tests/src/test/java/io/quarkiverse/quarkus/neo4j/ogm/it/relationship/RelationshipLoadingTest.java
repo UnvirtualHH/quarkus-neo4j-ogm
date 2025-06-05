@@ -63,7 +63,7 @@ public class RelationshipLoadingTest {
 
         // Then
         assertNotNull(book.getAuthor());
-        assertEquals(authorId, book.getAuthor().getId());
+        assertEquals(UUID.fromString(authorId), book.getAuthor().getId());
     }
 
     private String createTestAuthorWithBooks() {

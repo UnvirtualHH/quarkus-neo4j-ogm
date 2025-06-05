@@ -1,7 +1,6 @@
 package io.quarkiverse.quarkus.neo4j.ogm.runtime.repository;
 
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -14,7 +13,7 @@ import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationLoader;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationshipData;
 
 public abstract class Repository<T> {
-
+    private final Set<Object> visited = new HashSet<>();
     protected final Driver driver;
     protected final String label;
     protected final EntityMapper<T> entityMapper;
@@ -245,9 +244,11 @@ public abstract class Repository<T> {
         }
 
         Object id = entityMapper.getNodeId(entity);
-        if (id == null) {
+        if (id == null || visited.contains(id)) {
             return;
         }
+
+        visited.add(id);
 
         try {
             relationLoader.loadRelations(entity);

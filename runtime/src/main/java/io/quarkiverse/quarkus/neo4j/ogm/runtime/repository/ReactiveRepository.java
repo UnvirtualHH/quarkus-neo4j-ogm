@@ -2,6 +2,8 @@ package io.quarkiverse.quarkus.neo4j.ogm.runtime.repository;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 import org.neo4j.driver.Driver;
@@ -10,20 +12,30 @@ import org.neo4j.driver.Values;
 import org.neo4j.driver.reactive.ReactiveResult;
 import org.neo4j.driver.reactive.ReactiveSession;
 
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityMapper;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityWithRelations;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationLoader;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationshipData;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 
 public abstract class ReactiveRepository<T> {
+    private static final ThreadLocal<Set<Object>> VISITED = ThreadLocal.withInitial(() -> ConcurrentHashMap.newKeySet());
 
     protected final Driver driver;
     protected final String label;
     protected final EntityMapper<T> entityMapper;
     protected final ReactiveRepositoryRegistry reactiveRegistry;
-    protected RelationLoader<T> relationLoader;
+    protected ReactiveRelationLoader<T> relationLoader;
+
+    public static class EntityNotFoundException extends RuntimeException {
+        public EntityNotFoundException(String message) {
+            super(message);
+        }
+    }
+
+    public static class RepositoryException extends RuntimeException {
+        public RepositoryException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
 
     public ReactiveRepository() {
         this.driver = null;
@@ -43,14 +55,25 @@ public abstract class ReactiveRepository<T> {
     }
 
     private static Function<ReactiveSession, Uni<Void>> closeSession() {
-        return session -> Uni.createFrom().publisher(session.close()).replaceWithVoid();
+        return session -> Uni.createFrom().publisher(session.close())
+                .replaceWithVoid()
+                .onFailure().invoke(throwable -> {
+                    // Log session close failures but don't propagate
+                    System.err.println("Failed to close Neo4j session: " + throwable.getMessage());
+                });
+    }
+
+    // Helper method to clear visited set for operation completion
+    private static void clearVisited() {
+        VISITED.get().clear();
     }
 
     protected abstract Class<T> getEntityType();
 
     public Uni<T> findById(Object id) {
         return runReadQuerySingle("MATCH (n:" + label + " {id: $id}) RETURN n AS node", Map.of("id", id))
-                .flatMap(entity -> loadRelations(entity).replaceWith(entity));
+                .flatMap(this::loadRelations)
+                .invoke(entity -> clearVisited()); // Clear after operation
     }
 
     public Multi<T> findAll() {
@@ -67,7 +90,8 @@ public abstract class ReactiveRepository<T> {
         Object id = entityMapper.getNodeId(entity);
 
         return runWriteQuerySingle("CREATE (n:" + label + " $props) RETURN n AS node", Map.of("props", data.getProperties()))
-                .flatMap(saved -> persistRelationships(label, id, data.getRelationships()).replaceWith(saved));
+                .flatMap(saved -> persistRelationships(label, id, data.getRelationships()).replaceWith(saved))
+                .invoke(result -> clearVisited()); // Clear after operation
     }
 
     public Uni<T> update(T entity) {
@@ -76,7 +100,8 @@ public abstract class ReactiveRepository<T> {
 
         return runWriteQuerySingle("MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
                 Map.of("id", id, "props", data.getProperties()))
-                .flatMap(updated -> persistRelationships(label, id, data.getRelationships()).replaceWith(updated));
+                .flatMap(updated -> persistRelationships(label, id, data.getRelationships()).replaceWith(updated))
+                .invoke(result -> clearVisited()); // Clear after operation
     }
 
     public Uni<T> merge(T entity) {
@@ -85,7 +110,8 @@ public abstract class ReactiveRepository<T> {
 
         return runWriteQuerySingle("MERGE (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
                 Map.of("id", id, "props", data.getProperties()))
-                .flatMap(merged -> persistRelationships(label, id, data.getRelationships()).replaceWith(merged));
+                .flatMap(merged -> persistRelationships(label, id, data.getRelationships()).replaceWith(merged))
+                .invoke(result -> clearVisited()); // Clear after operation
     }
 
     public Uni<Void> delete(T entity) {
@@ -118,9 +144,18 @@ public abstract class ReactiveRepository<T> {
         return querySingle(cypher, Map.of());
     }
 
+    // Fixed: Use runReadQuerySingle for read queries
     public Uni<T> querySingle(String cypher, Map<String, Object> params) {
+        return runReadQuerySingle(cypher, params)
+                .flatMap(this::loadRelations)
+                .invoke(result -> clearVisited()); // Clear after operation
+    }
+
+    // Separate method for write queries
+    public Uni<T> executeSingle(String cypher, Map<String, Object> params) {
         return runWriteQuerySingle(cypher, params)
-                .flatMap(entity -> loadRelations(entity).replaceWith(entity));
+                .flatMap(this::loadRelations)
+                .invoke(result -> clearVisited()); // Clear after operation
     }
 
     public <R> Uni<R> queryScalar(String cypher, Map<String, Object> params, Function<Record, R> mapper) {
@@ -138,7 +173,7 @@ public abstract class ReactiveRepository<T> {
     private Uni<T> runReadQuerySingle(String cypher, Map<String, Object> params) {
         return runReadQuery(cypher, params)
                 .toUni()
-                .onItem().ifNull().failWith(() -> new RuntimeException("No result found"));
+                .onItem().ifNull().failWith(() -> new EntityNotFoundException("No entity found for query: " + cypher));
     }
 
     private Uni<T> runWriteQuerySingle(String cypher, Map<String, Object> params) {
@@ -146,7 +181,7 @@ public abstract class ReactiveRepository<T> {
                 .collect().asList()
                 .map(records -> {
                     if (records.isEmpty()) {
-                        throw new RuntimeException("No result found");
+                        throw new EntityNotFoundException("No entity found for query: " + cypher);
                     }
                     return entityMapper.map(records.get(0), "node");
                 });
@@ -162,7 +197,8 @@ public abstract class ReactiveRepository<T> {
                             .flatMap(ignore -> Multi.createFrom().item((Void) null));
                 }))
                 .withFinalizer(closeSession())
-                .toUni();
+                .toUni()
+                .onFailure().transform(throwable -> new RepositoryException("Failed to execute write query", throwable));
     }
 
     private <R> Uni<R> runScalarReadQuery(String cypher, Map<String, Object> params, Function<Record, R> mapper) {
@@ -176,7 +212,8 @@ public abstract class ReactiveRepository<T> {
                 }))
                 .withFinalizer(closeSession())
                 .toUni()
-                .onItem().ifNull().failWith(() -> new RuntimeException("No scalar result"));
+                .onItem().ifNull().failWith(() -> new EntityNotFoundException("No scalar result for query: " + cypher))
+                .onFailure().transform(throwable -> new RepositoryException("Failed to execute scalar query", throwable));
     }
 
     private Multi<Record> runQueryInternal(String cypher, Map<String, Object> params, boolean readOnly) {
@@ -191,7 +228,8 @@ public abstract class ReactiveRepository<T> {
                                 .flatMap(ReactiveResult::records));
                     }
                 })
-                .withFinalizer(closeSession());
+                .withFinalizer(closeSession())
+                .onFailure().transform(throwable -> new RepositoryException("Failed to execute query", throwable));
     }
 
     private Uni<Void> persistRelationships(String label, Object fromId, List<RelationshipData> relationships) {
@@ -242,26 +280,34 @@ public abstract class ReactiveRepository<T> {
 
     /**
      * Loads all relationships for the given entity.
+     * Uses ThreadLocal visited set to prevent infinite loops while avoiding memory leaks.
      *
      * @param entity The entity to load relationships for
      * @return A Uni that completes when all relationships are loaded
      */
-    protected Uni<Void> loadRelations(T entity) {
+    protected Uni<T> loadRelations(T entity) {
         if (entity == null || relationLoader == null) {
-            return Uni.createFrom().voidItem();
+            return Uni.createFrom().item(entity);
         }
 
         Object id = entityMapper.getNodeId(entity);
-        if (id == null) {
-            return Uni.createFrom().voidItem();
+        Set<Object> visited = VISITED.get();
+
+        if (id == null || visited.contains(id)) {
+            return Uni.createFrom().item(entity);
         }
 
-        return Uni.createFrom().voidItem()
-                .invoke(() -> relationLoader.loadRelations(entity))
-                .emitOn(java.util.concurrent.Executors.newSingleThreadExecutor());
+        visited.add(id);
+
+        return relationLoader.loadRelations(entity);
     }
 
     public EntityMapper<T> getEntityMapper() {
         return entityMapper;
+    }
+
+    // Utility method to manually clear visited set if needed
+    public static void clearVisitedEntities() {
+        clearVisited();
     }
 }
