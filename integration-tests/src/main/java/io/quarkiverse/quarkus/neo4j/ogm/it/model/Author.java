@@ -1,6 +1,5 @@
 package io.quarkiverse.quarkus.neo4j.ogm.it.model;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -18,7 +17,7 @@ public class Author {
     private String name;
 
     @Relationship(type = "WROTE", direction = Direction.OUTGOING)
-    private List<Book> books = new ArrayList<>();
+    private List<Book> books;
 
     public UUID getId() {
         return id;

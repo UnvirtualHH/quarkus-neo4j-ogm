@@ -14,6 +14,9 @@ import org.neo4j.driver.reactive.ReactiveSession;
 
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.exception.RepositoryException;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Pageable;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Paged;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Sortable;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 
@@ -66,6 +69,37 @@ public abstract class ReactiveRepository<T> {
     public Multi<T> findAll() {
         return runReadQuery("MATCH (n:" + label + ") RETURN n AS node", Map.of())
                 .onItem().transformToUniAndMerge(entity -> loadRelations(entity).replaceWith(entity));
+    }
+
+    public Multi<T> findAll(Pageable pageable, Sortable sortable) {
+        String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
+        String cypher = String.format("MATCH (n:%s) RETURN n AS node %s SKIP $skip LIMIT $limit", label, sortClause);
+        Map<String, Object> params = Map.of(
+                "skip", pageable.page() * pageable.size(),
+                "limit", pageable.size());
+        return runReadQuery(cypher, params)
+                .onItem().transformToUniAndMerge(entity -> loadRelations(entity).replaceWith(entity));
+    }
+
+    public Uni<Paged<T>> findAllPaged(Pageable pageable, Sortable sortable) {
+        String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
+        String cypher = String.format("MATCH (n:%s) RETURN n AS node %s SKIP $skip LIMIT $limit", label, sortClause);
+        Map<String, Object> params = Map.of(
+                "skip", pageable.page() * pageable.size(),
+                "limit", pageable.size());
+
+        Uni<Long> countUni = count();
+        Uni<List<T>> contentUni = runReadQuery(cypher, params)
+                .onItem().transformToUniAndMerge(entity -> loadRelations(entity).replaceWith(entity))
+                .collect().asList();
+
+        return Uni.combine().all().unis(contentUni, countUni)
+                .asTuple()
+                .map(tuple -> new Paged<>(
+                        tuple.getItem1(),
+                        tuple.getItem2(),
+                        pageable.page(),
+                        pageable.size()));
     }
 
     public Uni<Long> count() {
@@ -122,9 +156,50 @@ public abstract class ReactiveRepository<T> {
         return runReadQuery(cypher, Map.of());
     }
 
+    public Multi<T> query(String cypher, Pageable pageable, Sortable sortable) {
+        return query(cypher, Map.of(), pageable, sortable);
+    }
+
     public Multi<T> query(String cypher, Map<String, Object> params) {
         return runReadQuery(cypher, params)
                 .onItem().transformToUniAndMerge(entity -> loadRelations(entity).replaceWith(entity));
+    }
+
+    public Multi<T> query(String cypher, Map<String, Object> params, Pageable pageable, Sortable sortable) {
+        String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
+        String pagedCypher = String.format("%s %s SKIP $skip LIMIT $limit", cypher, sortClause);
+        Map<String, Object> allParams = new java.util.HashMap<>(params);
+        allParams.put("skip", pageable.page() * pageable.size());
+        allParams.put("limit", pageable.size());
+        return runReadQuery(pagedCypher, allParams)
+                .onItem().transformToUniAndMerge(entity -> loadRelations(entity).replaceWith(entity));
+    }
+
+    public Uni<Paged<T>> queryPaged(
+            String baseCypher, // z.B. "MATCH (n:Person) WHERE n.age > $minAge"
+            Map<String, Object> params,
+            Pageable pageable,
+            Sortable sortable) {
+        String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
+        String pagedCypher = baseCypher + " RETURN n AS node " + sortClause + " SKIP $skip LIMIT $limit";
+        Map<String, Object> allParams = new java.util.HashMap<>(params);
+        allParams.put("skip", pageable.page() * pageable.size());
+        allParams.put("limit", pageable.size());
+
+        Uni<List<T>> contentUni = runReadQuery(pagedCypher, allParams)
+                .onItem().transformToUniAndMerge(entity -> loadRelations(entity).replaceWith(entity))
+                .collect().asList();
+
+        String countCypher = baseCypher + " RETURN count(n) AS count";
+        Uni<Long> countUni = runScalarReadQuery(countCypher, params, r -> r.get("count").asLong());
+
+        return Uni.combine().all().unis(contentUni, countUni)
+                .asTuple()
+                .map(tuple -> new Paged<>(
+                        tuple.getItem1(),
+                        tuple.getItem2(),
+                        pageable.page(),
+                        pageable.size()));
     }
 
     public Uni<T> querySingle(String cypher) {

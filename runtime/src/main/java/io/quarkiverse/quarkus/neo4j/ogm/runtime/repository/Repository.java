@@ -11,6 +11,9 @@ import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityMapper;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityWithRelations;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationLoader;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationshipData;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Pageable;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Paged;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Sortable;
 
 public abstract class Repository<T> {
     private final Set<Object> visited = new HashSet<>();
@@ -83,6 +86,39 @@ public abstract class Repository<T> {
             entities.forEach(entity -> loadRelations(entity));
             return entities;
         });
+    }
+
+    public List<T> findAll(Pageable pageable, Sortable sortable) {
+        return inReadTx(tx -> {
+            String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
+            String cypher = String.format("MATCH (n:%s) RETURN n AS node %s SKIP $skip LIMIT $limit", label, sortClause);
+            Map<String, Object> params = Map.of(
+                    "skip", pageable.page() * pageable.size(),
+                    "limit", pageable.size());
+            var result = tx.run(cypher, params);
+            List<T> entities = result.list(r -> entityMapper.map(r, "node"));
+            entities.forEach(this::loadRelations);
+            return entities;
+        });
+    }
+
+    public Paged<T> findAllPaged(Pageable pageable, Sortable sortable) {
+        String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
+        String cypher = String.format("MATCH (n:%s) RETURN n AS node %s SKIP $skip LIMIT $limit", label, sortClause);
+        Map<String, Object> params = Map.of(
+                "skip", pageable.page() * pageable.size(),
+                "limit", pageable.size());
+
+        List<T> content = inReadTx(tx -> {
+            var result = tx.run(cypher, params);
+            List<T> entities = result.list(r -> entityMapper.map(r, "node"));
+            entities.forEach(this::loadRelations);
+            return entities;
+        });
+
+        long total = count();
+
+        return new Paged<>(content, total, pageable.page(), pageable.size());
     }
 
     public long count() {
@@ -169,6 +205,10 @@ public abstract class Repository<T> {
         return query(cypher, Map.of());
     }
 
+    public List<T> query(String cypher, Pageable pageable, Sortable sortable) {
+        return query(cypher, Map.of(), pageable, sortable);
+    }
+
     public List<T> query(String cypher, Map<String, Object> parameters) {
         return inReadTx(tx -> {
             List<T> results = tx.run(cypher, Values.value(parameters))
@@ -176,6 +216,47 @@ public abstract class Repository<T> {
             results.forEach(entity -> loadRelations(entity));
             return results;
         });
+    }
+
+    public List<T> query(String cypher, Map<String, Object> parameters, Pageable pageable, Sortable sortable) {
+        return inReadTx(tx -> {
+            String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
+            String pagedCypher = String.format("%s %s SKIP $skip LIMIT $limit", cypher, sortClause);
+            Map<String, Object> params = new HashMap<>(parameters);
+            params.put("skip", pageable.page() * pageable.size());
+            params.put("limit", pageable.size());
+            var result = tx.run(pagedCypher, params);
+            List<T> entities = result.list(r -> entityMapper.map(r, "node"));
+            entities.forEach(this::loadRelations);
+            return entities;
+        });
+    }
+
+    public Paged<T> queryPaged(
+            String baseCypher, // z.B. "MATCH (n:Person) WHERE n.age > $minAge"
+            Map<String, Object> parameters,
+            Pageable pageable,
+            Sortable sortable) {
+        String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
+        String pagedCypher = baseCypher + " RETURN n AS node " + sortClause + " SKIP $skip LIMIT $limit";
+        Map<String, Object> allParams = new HashMap<>(parameters);
+        allParams.put("skip", pageable.page() * pageable.size());
+        allParams.put("limit", pageable.size());
+
+        List<T> content = inReadTx(tx -> {
+            var result = tx.run(pagedCypher, allParams);
+            List<T> entities = result.list(r -> entityMapper.map(r, "node"));
+            entities.forEach(this::loadRelations);
+            return entities;
+        });
+
+        String countCypher = baseCypher + " RETURN count(n) AS count";
+        long total = inReadTx(tx -> {
+            var result = tx.run(countCypher, parameters);
+            return result.single().get("count").asLong();
+        });
+
+        return new Paged<>(content, total, pageable.page(), pageable.size());
     }
 
     public T querySingle(String cypher) {
