@@ -1,27 +1,134 @@
-# Quarkus Neo4j Ogm
+# Quarkus Neo4j OGM Extension
 
-[![Version](https://img.shields.io/maven-central/v/io.quarkiverse.quarkus-neo4j-ogm/quarkus-neo4j-ogm?logo=apache-maven&style=flat-square)](https://central.sonatype.com/artifact/io.quarkiverse.quarkus-neo4j-ogm/quarkus-neo4j-ogm-parent)
+This Quarkus extension provides seamless integration of Neo4j's Object-Graph Mapping (OGM) capabilities into Quarkus applications. It facilitates efficient and type-safe interactions with Neo4j graph databases by leveraging build-time code generation for repositories, mappers, and relationship loaders.
 
-## Welcome to Quarkiverse!
+## Features
 
-Congratulations and thank you for creating a new Quarkus extension project in Quarkiverse!
+* **Build-Time Code Generation**: Generates type-safe repositories, entity mappers, and relationship loaders during compilation, eliminating runtime reflection overhead.
+* **Dual Programming Models**: Supports both blocking (`Repository<T>`) and reactive (`ReactiveRepository<T>`) APIs for flexible data access patterns.
+* **Automatic Relationship Management**: Handles loading of `@Relationship` annotated fields with cycle detection to prevent infinite loops.
+* **Type Safety**: Ensures compile-time validation of database operations, reducing runtime errors.
+* **Dependency Injection Support**: Provides `RepositoryRegistry` and `ReactiveRepositoryRegistry` for easy injection of repositories into your application.
+* **GraalVM Native Image Compatibility**: Optimized for fast startup times and reduced memory footprint in native executables.
 
-Feel free to replace this content with the proper description of your new project and necessary instructions how to use and contribute to it.
+## Getting Started
 
-You can find the basic info, Quarkiverse policies and conventions in [the Quarkiverse wiki](https://github.com/quarkiverse/quarkiverse/wiki).
+### Prerequisites
 
-In case you are creating a Quarkus extension project for the first time, please follow [Building My First Extension](https://quarkus.io/guides/building-my-first-extension) guide.
+* Java 17 or higher
+* Maven
+* Quarkus
+* Neo4j Database
 
-Other useful articles related to Quarkus extension development can be found under the [Writing Extensions](https://quarkus.io/guides/#writing-extensions) guide category on the [Quarkus.io](https://quarkus.io) website.
+### Installation
 
-Thanks again, good luck and have fun!
+Add the following dependency to your `pom.xml`:
 
-## Documentation
+```xml
+<dependency>
+    <groupId>io.quarkiverse.quarkus.neo4j</groupId>
+    <artifactId>quarkus-neo4j-ogm</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
 
-The documentation for this extension should be maintained as part of this repository and it is stored in the `docs/` directory.
+### Configuration
 
-The layout should follow the [Antora's Standard File and Directory Set](https://docs.antora.org/antora/2.3/standard-directories/).
+Configure the Neo4j connection in your `application.properties`:
 
-Once the docs are ready to be published, please open a PR including this repository in the [Quarkiverse Docs Antora playbook](https://github.com/quarkiverse/quarkiverse-docs/blob/main/antora-playbook.yml#L7). See an example [here](https://github.com/quarkiverse/quarkiverse-docs/pull/1)
+```properties
+quarkus.neo4j.uri=bolt://localhost:7687
+quarkus.neo4j.authentication.username=neo4j
+quarkus.neo4j.authentication.password=your_password
+```
 
-Your documentation will then be published to the <https://docs.quarkiverse.io/> website.
+### Defining Entities
+
+Annotate your domain classes with `@NodeEntity` and define relationships using `@Relationship`:
+
+```java
+@NodeEntity
+public class Person {
+    @Id
+    private Long id;
+    private String name;
+
+    @Relationship(type = "FRIEND_OF")
+    private List<Person> friends;
+}
+```
+
+### Generating Repositories
+
+Annotate your domain classes with `@GenerateRepository(GenerateRepository.RepositoryType.BOTH)`:
+
+```java
+@NodeEntity
+@GenerateRepository(GenerateRepository.RepositoryType.BOTH)
+public class Person {
+    @Id
+    private Long id;
+    private String name;
+
+    @Relationship(type = "FRIEND_OF")
+    private List<Person> friends;
+}
+```
+
+### Using Repositories
+
+Inject the generated repositories into your services:
+
+```java
+@ApplicationScoped
+public class PersonService {
+
+    @Inject
+    PersonBaseRepository personRepository;
+
+    public List<Person> getAllPersons() {       
+        return personRepository.findAll();
+    }
+}
+```
+
+For reactive operations:
+
+```java
+@ApplicationScoped
+public class ReactivePersonService {
+
+    @Inject
+    PersonBaseReactiveRepository personRepository;
+
+    public Uni<List<Person>> getAllPersons() {        
+        return personRepository.findAll();
+    }
+}
+```
+
+## Relationship Management
+
+The extension automatically handles the loading of related entities defined with `@Relationship`. It includes cycle detection mechanisms to prevent infinite loops during relationship traversal.
+
+## Code Generation
+
+During the build process, the extension generates:
+
+* **Entity Mappers**: For converting between Java objects and Neo4j nodes/relationships.
+* **Repositories**: Type-safe data access layers for each entity.
+* **Relationship Loaders**: For managing the loading of related entities.
+
+This approach ensures high performance and compatibility with native images.
+
+## Testing
+
+The extension supports integration testing with Neo4j using Testcontainers. Configure your tests to spin up a Neo4j container and verify repository operations.
+
+## Contributing
+
+Contributions are welcome! Please fork the repository and submit a pull request with your changes. Ensure that your code adheres to the existing coding standards and includes appropriate tests.
+
+## License
+
+This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
