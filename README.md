@@ -49,8 +49,9 @@ Annotate your domain classes with `@NodeEntity` and define relationships using `
 ```java
 @NodeEntity
 public class Person {
-    @Id
-    private Long id;
+    @NodeId
+    @GeneratedValue(strategy = GeneratedValue.Strategy.UUID)
+    private UUID id;
     private String name;
 
     @Relationship(type = "FRIEND_OF")
@@ -66,8 +67,9 @@ Annotate your domain classes with `@GenerateRepository(GenerateRepository.Reposi
 @NodeEntity
 @GenerateRepository(GenerateRepository.RepositoryType.BOTH)
 public class Person {
-    @Id
-    private Long id;
+    @NodeId
+    @GeneratedValue(strategy = GeneratedValue.Strategy.UUID)
+    private UUID id;
     private String name;
 
     @Relationship(type = "FRIEND_OF")
