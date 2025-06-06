@@ -12,30 +12,19 @@ import org.neo4j.driver.Values;
 import org.neo4j.driver.reactive.ReactiveResult;
 import org.neo4j.driver.reactive.ReactiveSession;
 
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.exception.RepositoryException;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 
 public abstract class ReactiveRepository<T> {
-    private static final ThreadLocal<Set<Object>> VISITED = ThreadLocal.withInitial(() -> ConcurrentHashMap.newKeySet());
+    private static final ThreadLocal<Set<Object>> VISITED = ThreadLocal.withInitial(ConcurrentHashMap::newKeySet);
 
     protected final Driver driver;
     protected final String label;
     protected final EntityMapper<T> entityMapper;
     protected final ReactiveRepositoryRegistry reactiveRegistry;
     protected ReactiveRelationLoader<T> relationLoader;
-
-    public static class EntityNotFoundException extends RuntimeException {
-        public EntityNotFoundException(String message) {
-            super(message);
-        }
-    }
-
-    public static class RepositoryException extends RuntimeException {
-        public RepositoryException(String message, Throwable cause) {
-            super(message, cause);
-        }
-    }
 
     public ReactiveRepository() {
         this.driver = null;
@@ -58,12 +47,10 @@ public abstract class ReactiveRepository<T> {
         return session -> Uni.createFrom().publisher(session.close())
                 .replaceWithVoid()
                 .onFailure().invoke(throwable -> {
-                    // Log session close failures but don't propagate
                     System.err.println("Failed to close Neo4j session: " + throwable.getMessage());
                 });
     }
 
-    // Helper method to clear visited set for operation completion
     private static void clearVisited() {
         VISITED.get().clear();
     }
@@ -73,7 +60,7 @@ public abstract class ReactiveRepository<T> {
     public Uni<T> findById(Object id) {
         return runReadQuerySingle("MATCH (n:" + label + " {id: $id}) RETURN n AS node", Map.of("id", id))
                 .flatMap(this::loadRelations)
-                .invoke(entity -> clearVisited()); // Clear after operation
+                .invoke(entity -> clearVisited());
     }
 
     public Multi<T> findAll() {
@@ -91,7 +78,7 @@ public abstract class ReactiveRepository<T> {
 
         return runWriteQuerySingle("CREATE (n:" + label + " $props) RETURN n AS node", Map.of("props", data.getProperties()))
                 .flatMap(saved -> persistRelationships(label, id, data.getRelationships()).replaceWith(saved))
-                .invoke(result -> clearVisited()); // Clear after operation
+                .invoke(result -> clearVisited());
     }
 
     public Uni<T> update(T entity) {
@@ -101,7 +88,7 @@ public abstract class ReactiveRepository<T> {
         return runWriteQuerySingle("MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
                 Map.of("id", id, "props", data.getProperties()))
                 .flatMap(updated -> persistRelationships(label, id, data.getRelationships()).replaceWith(updated))
-                .invoke(result -> clearVisited()); // Clear after operation
+                .invoke(result -> clearVisited());
     }
 
     public Uni<T> merge(T entity) {
@@ -111,7 +98,7 @@ public abstract class ReactiveRepository<T> {
         return runWriteQuerySingle("MERGE (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
                 Map.of("id", id, "props", data.getProperties()))
                 .flatMap(merged -> persistRelationships(label, id, data.getRelationships()).replaceWith(merged))
-                .invoke(result -> clearVisited()); // Clear after operation
+                .invoke(result -> clearVisited());
     }
 
     public Uni<Void> delete(T entity) {
@@ -144,18 +131,16 @@ public abstract class ReactiveRepository<T> {
         return querySingle(cypher, Map.of());
     }
 
-    // Fixed: Use runReadQuerySingle for read queries
     public Uni<T> querySingle(String cypher, Map<String, Object> params) {
         return runReadQuerySingle(cypher, params)
                 .flatMap(this::loadRelations)
-                .invoke(result -> clearVisited()); // Clear after operation
+                .invoke(result -> clearVisited());
     }
 
-    // Separate method for write queries
     public Uni<T> executeSingle(String cypher, Map<String, Object> params) {
         return runWriteQuerySingle(cypher, params)
                 .flatMap(this::loadRelations)
-                .invoke(result -> clearVisited()); // Clear after operation
+                .invoke(result -> clearVisited());
     }
 
     public <R> Uni<R> queryScalar(String cypher, Map<String, Object> params, Function<Record, R> mapper) {
@@ -172,8 +157,7 @@ public abstract class ReactiveRepository<T> {
 
     private Uni<T> runReadQuerySingle(String cypher, Map<String, Object> params) {
         return runReadQuery(cypher, params)
-                .toUni()
-                .onItem().ifNull().failWith(() -> new EntityNotFoundException("No entity found for query: " + cypher));
+                .toUni();
     }
 
     private Uni<T> runWriteQuerySingle(String cypher, Map<String, Object> params) {
@@ -181,7 +165,7 @@ public abstract class ReactiveRepository<T> {
                 .collect().asList()
                 .map(records -> {
                     if (records.isEmpty()) {
-                        throw new EntityNotFoundException("No entity found for query: " + cypher);
+                        return null;
                     }
                     return entityMapper.map(records.get(0), "node");
                 });
@@ -212,7 +196,6 @@ public abstract class ReactiveRepository<T> {
                 }))
                 .withFinalizer(closeSession())
                 .toUni()
-                .onItem().ifNull().failWith(() -> new EntityNotFoundException("No scalar result for query: " + cypher))
                 .onFailure().transform(throwable -> new RepositoryException("Failed to execute scalar query", throwable));
     }
 
@@ -304,10 +287,5 @@ public abstract class ReactiveRepository<T> {
 
     public EntityMapper<T> getEntityMapper() {
         return entityMapper;
-    }
-
-    // Utility method to manually clear visited set if needed
-    public static void clearVisitedEntities() {
-        clearVisited();
     }
 }

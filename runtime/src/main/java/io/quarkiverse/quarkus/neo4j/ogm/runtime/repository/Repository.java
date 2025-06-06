@@ -57,27 +57,36 @@ public abstract class Repository<T> {
         }
     }
 
+    private <R> R inReadTx(Function<Transaction, R> work) {
+        try (Session session = driver.session()) {
+            try (Transaction tx = session.beginTransaction()) {
+                return work.apply(tx);
+            }
+        }
+    }
+
     public T findById(Object id) {
-        return inWriteTx(tx -> {
+        return inReadTx(tx -> {
             var result = tx.run("MATCH (n:" + label + " {id: $id}) RETURN n AS node",
                     Values.parameters("id", id));
             T entity = entityMapper.map(result.single(), "node");
-            loadRelations(tx, entity);
+
+            loadRelations(entity);
             return entity;
         });
     }
 
     public List<T> findAll() {
-        return inWriteTx(tx -> {
+        return inReadTx(tx -> {
             var result = tx.run("MATCH (n:" + label + ") RETURN n AS node");
             List<T> entities = result.list(r -> entityMapper.map(r, "node"));
-            entities.forEach(entity -> loadRelations(tx, entity));
+            entities.forEach(entity -> loadRelations(entity));
             return entities;
         });
     }
 
     public long count() {
-        return inWriteTx(tx -> {
+        return inReadTx(tx -> {
             var result = tx.run("MATCH (n:" + label + ") RETURN count(n) AS count");
             return result.single().get("count").asLong();
         });
@@ -145,7 +154,7 @@ public abstract class Repository<T> {
     }
 
     public boolean existsById(Object id) {
-        return inWriteTx(tx -> {
+        return inReadTx(tx -> {
             var result = tx.run("MATCH (n:" + label + " {id: $id}) RETURN count(n) > 0 AS exists",
                     Values.parameters("id", id));
             return result.single().get("exists").asBoolean();
@@ -161,10 +170,10 @@ public abstract class Repository<T> {
     }
 
     public List<T> query(String cypher, Map<String, Object> parameters) {
-        return inWriteTx(tx -> {
+        return inReadTx(tx -> {
             List<T> results = tx.run(cypher, Values.value(parameters))
                     .list(r -> entityMapper.map(r, "node"));
-            results.forEach(entity -> loadRelations(tx, entity));
+            results.forEach(entity -> loadRelations(entity));
             return results;
         });
     }
@@ -174,9 +183,13 @@ public abstract class Repository<T> {
     }
 
     public T querySingle(String cypher, Map<String, Object> parameters) {
-        return inWriteTx(tx -> {
-            T entity = entityMapper.map(tx.run(cypher, Values.value(parameters)).single(), "node");
-            loadRelations(tx, entity);
+        return inReadTx(tx -> {
+            var result = tx.run(cypher, Values.value(parameters));
+            if (!result.hasNext()) {
+                return null;
+            }
+            T entity = entityMapper.map(result.single(), "node");
+            loadRelations(entity);
             return entity;
         });
     }
@@ -190,7 +203,7 @@ public abstract class Repository<T> {
     }
 
     public <R> R queryScalar(String cypher, Map<String, Object> parameters, Function<Record, R> mapper) {
-        return inWriteTx(tx -> mapper.apply(tx.run(cypher, Values.value(parameters)).single()));
+        return inReadTx(tx -> mapper.apply(tx.run(cypher, Values.value(parameters)).single()));
     }
 
     private void persistRelationships(Transaction tx, String label, Object fromId, List<RelationshipData> relationships) {
@@ -235,10 +248,9 @@ public abstract class Repository<T> {
     /**
      * Loads all relationships for the given entity.
      *
-     * @param tx The current transaction
      * @param entity The entity to load relationships for
      */
-    protected void loadRelations(Transaction tx, T entity) {
+    protected void loadRelations(T entity) {
         if (entity == null || relationLoader == null) {
             return;
         }
