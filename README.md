@@ -47,14 +47,14 @@ quarkus.neo4j.authentication.password=your_password
 Annotate your domain classes with `@NodeEntity` and define relationships using `@Relationship`:
 
 ```java
-@NodeEntity
+@NodeEntity(label = "Person")
 public class Person {
     @NodeId
     @GeneratedValue(strategy = GeneratedValue.Strategy.UUID)
     private UUID id;
     private String name;
 
-    @Relationship(type = "FRIEND_OF")
+    @Relationship(type = "FRIEND_OF", direction = Direction.OUTGOING)
     private List<Person> friends;
 }
 ```
@@ -64,7 +64,7 @@ public class Person {
 Annotate your domain classes with `@GenerateRepository(GenerateRepository.RepositoryType.BOTH)`:
 
 ```java
-@NodeEntity
+@NodeEntity(label = "Person")
 @GenerateRepository(GenerateRepository.RepositoryType.BOTH)
 public class Person {
     @NodeId
@@ -72,7 +72,7 @@ public class Person {
     private UUID id;
     private String name;
 
-    @Relationship(type = "FRIEND_OF")
+    @Relationship(type = "FRIEND_OF", direction = Direction.OUTGOING)
     private List<Person> friends;
 }
 ```
@@ -106,6 +106,27 @@ public class ReactivePersonService {
     public Uni<List<Person>> getAllPersons() {        
         return personRepository.findAll();
     }
+}
+```
+
+### Generating Queries
+
+Annotate your domain classes with `@Queries` to add static queries that will be generated into your repositories:
+
+```java
+@NodeEntity(label = "Person")
+@GenerateRepository(GenerateRepository.RepositoryType.BOTH)
+@Queries({
+        @Query(name = "findByName", cypher = "MATCH (p:Person {name: $name}) RETURN p AS node")
+})
+public class Person {
+    @NodeId
+    @GeneratedValue(strategy = GeneratedValue.Strategy.UUID)
+    private UUID id;
+    private String name;
+
+    @Relationship(type = "FRIEND_OF", direction = Direction.OUTGOING)
+    private List<Person> friends;
 }
 ```
 
