@@ -176,7 +176,7 @@ public abstract class ReactiveRepository<T> {
     }
 
     public Uni<Paged<T>> queryPaged(
-            String baseCypher, // z.B. "MATCH (n:Person) WHERE n.age > $minAge"
+            String baseCypher,
             Map<String, Object> params,
             Pageable pageable,
             Sortable sortable) {

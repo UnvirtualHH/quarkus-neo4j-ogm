@@ -233,7 +233,7 @@ public abstract class Repository<T> {
     }
 
     public Paged<T> queryPaged(
-            String baseCypher, // z.B. "MATCH (n:Person) WHERE n.age > $minAge"
+            String baseCypher,
             Map<String, Object> parameters,
             Pageable pageable,
             Sortable sortable) {
