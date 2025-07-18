@@ -1,14 +1,14 @@
 package io.quarkiverse.quarkus.neo4j.ogm.runtime.repository;
 
-import java.util.HashMap;
-import java.util.Map;
-
 import jakarta.enterprise.context.ApplicationScoped;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @ApplicationScoped
 public class RepositoryRegistry {
 
-    private final Map<Class<?>, Repository<?>> registry = new HashMap<>();
+    private final Map<Class<?>, Repository<?>> registry = new ConcurrentHashMap<>();
 
     public void register(Class<?> entityType, Repository<?> repository) {
         if (!isRegistered(entityType)) {
@@ -28,4 +28,5 @@ public class RepositoryRegistry {
     public boolean isRegistered(Class<?> type) {
         return registry.containsKey(type);
     }
+
 }

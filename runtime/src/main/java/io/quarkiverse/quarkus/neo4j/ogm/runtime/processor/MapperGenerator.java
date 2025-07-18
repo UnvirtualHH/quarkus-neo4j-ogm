@@ -16,6 +16,7 @@ import com.palantir.javapoet.*;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.config.FieldMappingStrategy;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Convert;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Direction;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.RelationshipMode;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil;
 
@@ -28,7 +29,7 @@ public class MapperGenerator {
     }
 
     public void generateMapper(String packageName, TypeElement entityType, String mapperClassName,
-            ProcessingEnvironment processingEnv) {
+                               ProcessingEnvironment processingEnv) {
         MethodSpec mapMethod = generateMapMethod(entityType, processingEnv);
         MethodSpec toDbMethod = generateToDbMethod(entityType, processingEnv);
         MethodSpec getNodeIdMethod = generateGetNodeIdMethod(entityType);
@@ -54,6 +55,16 @@ public class MapperGenerator {
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, e.toString());
         }
+    }
+
+    private boolean shouldFetchRelationship(Relationship rel) {
+        return rel.mode() == RelationshipMode.FETCH_ONLY ||
+               rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
+    }
+
+    private boolean shouldPersistRelationship(Relationship rel) {
+        return rel.mode() == RelationshipMode.PERSIST_ONLY ||
+               rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
     }
 
     private MethodSpec generateMapMethod(TypeElement entityType, ProcessingEnvironment env) {
@@ -107,9 +118,10 @@ public class MapperGenerator {
             });
         }
 
+        // Relationships - ONLY include those that should be persisted
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             Relationship relationship = field.getAnnotation(Relationship.class);
-            if (relationship != null) {
+            if (relationship != null && shouldPersistRelationship(relationship)) {
                 String getterName = MapperUtil.resolveGetterName(field);
                 String relType = relationship.type();
                 Direction direction = relationship.direction();
@@ -173,7 +185,10 @@ public class MapperGenerator {
     private MethodSpec generateSetRelationMethod(TypeElement entityType, ProcessingEnvironment env) {
         List<VariableElement> relationshipFields = ElementFilter.fieldsIn(entityType.getEnclosedElements())
                 .stream()
-                .filter(f -> f.getAnnotation(Relationship.class) != null)
+                .filter(f -> {
+                    Relationship rel = f.getAnnotation(Relationship.class);
+                    return rel != null && shouldFetchRelationship(rel);
+                })
                 .toList();
 
         MethodSpec.Builder builder = MethodSpec.methodBuilder("setRelation")
@@ -184,7 +199,7 @@ public class MapperGenerator {
                 .addParameter(ClassName.get(Object.class), "relatedEntity");
 
         if (relationshipFields.isEmpty()) {
-            builder.addStatement("// no relationships");
+            builder.addStatement("// no fetchable relationships");
             return builder.build();
         }
 
@@ -226,12 +241,12 @@ public class MapperGenerator {
     private boolean shouldIncludeField(VariableElement field) {
         if (strategy == FieldMappingStrategy.EXPLICIT) {
             return field.getAnnotation(Property.class) != null
-                    || field.getAnnotation(NodeId.class) != null
-                    || field.getAnnotation(Convert.class) != null
-                    || field.getAnnotation(Enumerated.class) != null;
+                   || field.getAnnotation(NodeId.class) != null
+                   || field.getAnnotation(Convert.class) != null
+                   || field.getAnnotation(Enumerated.class) != null;
         } else {
             return field.getAnnotation(Transient.class) == null
-                    && TypeHandlerRegistry.findHandler(field).isPresent();
+                   && TypeHandlerRegistry.findHandler(field).isPresent();
         }
     }
 }

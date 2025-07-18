@@ -3,6 +3,7 @@ package io.quarkiverse.quarkus.neo4j.ogm.it.model;
 import java.util.UUID;
 
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Direction;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.RelationshipMode;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.GenerateRepository.RepositoryType;
 
@@ -18,7 +19,7 @@ public class Book {
     private UUID id;
     private String title;
 
-    @Relationship(type = "WROTE", direction = Direction.INCOMING)
+    @Relationship(type = "WROTE", direction = Direction.INCOMING, mode = RelationshipMode.FETCH_AND_PERSIST)
     private Author author;
 
     public UUID getId() {

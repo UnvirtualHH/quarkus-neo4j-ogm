@@ -1,6 +1,7 @@
 package io.quarkiverse.quarkus.neo4j.ogm.runtime.repository;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -16,12 +17,14 @@ import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Paged;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Sortable;
 
 public abstract class Repository<T> {
-    private final Set<Object> visited = new HashSet<>();
+    // ThreadLocal to track visited entities and prevent circular references
+    private static final ThreadLocal<Set<Object>> VISITED = ThreadLocal.withInitial(ConcurrentHashMap::newKeySet);
+
     protected final Driver driver;
     protected final String label;
     protected final EntityMapper<T> entityMapper;
     protected final RepositoryRegistry registry;
-    protected RelationLoader<T> relationLoader;
+    protected final RelationLoader<T> relationLoader;
 
     public Repository() {
         this.driver = null;
@@ -36,10 +39,33 @@ public abstract class Repository<T> {
         this.label = label;
         this.entityMapper = entityMapper;
         this.registry = registry;
-        this.relationLoader = null; // Will be set by the generated repository
+        this.relationLoader = null;
+    }
+
+    public Repository(Driver driver, String label, EntityMapper<T> entityMapper, RepositoryRegistry registry, RelationLoader<T> relationLoader) {
+        this.driver = driver;
+        this.label = label;
+        this.entityMapper = entityMapper;
+        this.registry = registry;
+        this.relationLoader = relationLoader;
     }
 
     protected abstract Class<T> getEntityType();
+
+    /**
+     * Get the relation loader for this repository
+     * @return The relation loader, or null if none is configured
+     */
+    public RelationLoader<T> getRelationLoader() {
+        return relationLoader;
+    }
+
+    /**
+     * Clear the visited entities set
+     */
+    private static void clearVisited() {
+        VISITED.get().clear();
+    }
 
     private <R> R inWriteTx(Function<Transaction, R> work) {
         try (Session session = driver.session()) {
@@ -75,6 +101,7 @@ public abstract class Repository<T> {
             T entity = entityMapper.map(result.single(), "node");
 
             loadRelations(entity);
+            clearVisited();
             return entity;
         });
     }
@@ -84,6 +111,7 @@ public abstract class Repository<T> {
             var result = tx.run("MATCH (n:" + label + ") RETURN n AS node");
             List<T> entities = result.list(r -> entityMapper.map(r, "node"));
             entities.forEach(entity -> loadRelations(entity));
+            clearVisited();
             return entities;
         });
     }
@@ -98,6 +126,7 @@ public abstract class Repository<T> {
             var result = tx.run(cypher, params);
             List<T> entities = result.list(r -> entityMapper.map(r, "node"));
             entities.forEach(this::loadRelations);
+            clearVisited();
             return entities;
         });
     }
@@ -113,6 +142,7 @@ public abstract class Repository<T> {
             var result = tx.run(cypher, params);
             List<T> entities = result.list(r -> entityMapper.map(r, "node"));
             entities.forEach(this::loadRelations);
+            clearVisited();
             return entities;
         });
 
@@ -138,6 +168,7 @@ public abstract class Repository<T> {
             T saved = entityMapper.map(result.single(), "node");
 
             persistRelationships(tx, label, id, data.getRelationships());
+            clearVisited();
             return saved;
         });
     }
@@ -155,6 +186,7 @@ public abstract class Repository<T> {
             T updated = entityMapper.map(result.single(), "node");
 
             persistRelationships(tx, label, id, data.getRelationships());
+            clearVisited();
             return updated;
         });
     }
@@ -172,6 +204,7 @@ public abstract class Repository<T> {
             T merged = entityMapper.map(result.single(), "node");
 
             persistRelationships(tx, label, id, data.getRelationships());
+            clearVisited();
             return merged;
         });
     }
@@ -214,6 +247,7 @@ public abstract class Repository<T> {
             List<T> results = tx.run(cypher, Values.value(parameters))
                     .list(r -> entityMapper.map(r, "node"));
             results.forEach(entity -> loadRelations(entity));
+            clearVisited();
             return results;
         });
     }
@@ -228,6 +262,7 @@ public abstract class Repository<T> {
             var result = tx.run(pagedCypher, params);
             List<T> entities = result.list(r -> entityMapper.map(r, "node"));
             entities.forEach(this::loadRelations);
+            clearVisited();
             return entities;
         });
     }
@@ -256,6 +291,7 @@ public abstract class Repository<T> {
             return result.single().get("count").asLong();
         });
 
+        clearVisited();
         return new Paged<>(content, total, pageable.page(), pageable.size());
     }
 
@@ -271,6 +307,7 @@ public abstract class Repository<T> {
             }
             T entity = entityMapper.map(result.single(), "node");
             loadRelations(entity);
+            clearVisited();
             return entity;
         });
     }
@@ -327,26 +364,48 @@ public abstract class Repository<T> {
     }
 
     /**
-     * Loads all relationships for the given entity.
+     * Loads all relationships for the given entity with depth control.
+     * Uses ThreadLocal visited set to prevent infinite loops.
      *
      * @param entity The entity to load relationships for
+     * @param currentDepth The current traversal depth
      */
-    protected void loadRelations(T entity) {
+    protected void loadRelations(T entity, int currentDepth) {
         if (entity == null || relationLoader == null) {
             return;
         }
 
         Object id = entityMapper.getNodeId(entity);
+        Set<Object> visited = VISITED.get();
+
         if (id == null || visited.contains(id)) {
             return;
         }
 
         visited.add(id);
+        relationLoader.loadRelations(entity, currentDepth);
+    }
 
-        try {
-            relationLoader.loadRelations(entity);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to load relationships for entity: " + entity, e);
+    /**
+     * Enhanced loadRelations method that calls the depth-aware version with depth 0
+     */
+    protected void loadRelations(T entity) {
+        loadRelations(entity, 0);
+        // Note: clearVisited() is called by the calling method to ensure proper cleanup
+    }
+
+    // Utility method for working with different entity types
+    @SuppressWarnings("unchecked")
+    private void loadRelationsForAnyEntity(Object entity, int currentDepth) {
+        if (entity == null) {
+            return;
+        }
+
+        Class<?> entityClass = entity.getClass();
+        Repository<Object> repository = (Repository<Object>) registry.getRepository(entityClass);
+
+        if (repository != null && repository.getRelationLoader() != null) {
+            repository.getRelationLoader().loadRelations(entity, currentDepth);
         }
     }
 }

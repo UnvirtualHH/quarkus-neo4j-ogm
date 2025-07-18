@@ -54,8 +54,7 @@ public class RepositoryGenerator {
             String loaderClassName = entityType.getSimpleName() + "RelationLoader";
             constructorBuilder
                     .addParameter(ClassName.get(packageName, loaderClassName), "relationLoader")
-                    .addStatement("super(driver, $S, entityMapper, registry)", label)
-                    .addStatement("this.relationLoader = relationLoader");
+                    .addStatement("super(driver, $S, entityMapper, registry, relationLoader)", label);
         } else {
             constructorBuilder.addStatement("super(driver, $S, entityMapper, registry)", label);
         }
@@ -70,7 +69,6 @@ public class RepositoryGenerator {
                 .addMethod(constructor)
                 .addMethod(MethodSpec.methodBuilder("registerSelf")
                         .addAnnotation(ClassName.get("jakarta.annotation", "PostConstruct"))
-                        .addModifiers(Modifier.PRIVATE)
                         .addStatement("registry.register($T.class, this)", entityType)
                         .build())
                 .superclass(ParameterizedTypeName.get(

@@ -55,8 +55,7 @@ public class ReactiveRepositoryGenerator {
             String loaderClassName = entityType.getSimpleName() + "ReactiveRelationLoader";
             constructorBuilder
                     .addParameter(ClassName.get(packageName, loaderClassName), "relationLoader")
-                    .addStatement("super(driver, $S, entityMapper, reactiveRegistry)", label)
-                    .addStatement("this.relationLoader = relationLoader");
+                    .addStatement("super(driver, $S, entityMapper, reactiveRegistry, relationLoader)", label);
         } else {
             constructorBuilder.addStatement("super(driver, $S, entityMapper, reactiveRegistry)", label);
         }
@@ -71,7 +70,6 @@ public class ReactiveRepositoryGenerator {
                 .addMethod(constructor)
                 .addMethod(MethodSpec.methodBuilder("registerSelf")
                         .addAnnotation(ClassName.get("jakarta.annotation", "PostConstruct"))
-                        .addModifiers(Modifier.PRIVATE)
                         .addStatement("reactiveRegistry.register($T.class, this)", entityType)
                         .build())
                 .superclass(ParameterizedTypeName.get(

@@ -27,7 +27,7 @@ public abstract class ReactiveRepository<T> {
     protected final String label;
     protected final EntityMapper<T> entityMapper;
     protected final ReactiveRepositoryRegistry reactiveRegistry;
-    protected ReactiveRelationLoader<T> relationLoader;
+    protected final ReactiveRelationLoader<T> relationLoader;
 
     public ReactiveRepository() {
         this.driver = null;
@@ -38,12 +38,21 @@ public abstract class ReactiveRepository<T> {
     }
 
     public ReactiveRepository(Driver driver, String label, EntityMapper<T> entityMapper,
-            ReactiveRepositoryRegistry reactiveRegistry) {
+                              ReactiveRepositoryRegistry reactiveRegistry) {
         this.driver = driver;
         this.label = label;
         this.entityMapper = entityMapper;
         this.reactiveRegistry = reactiveRegistry;
         this.relationLoader = null;
+    }
+
+    public ReactiveRepository(Driver driver, String label, EntityMapper<T> entityMapper,
+            ReactiveRepositoryRegistry reactiveRegistry, ReactiveRelationLoader<T> relationLoader) {
+        this.driver = driver;
+        this.label = label;
+        this.entityMapper = entityMapper;
+        this.reactiveRegistry = reactiveRegistry;
+        this.relationLoader = relationLoader;
     }
 
     private static Function<ReactiveSession, Uni<Void>> closeSession() {
@@ -337,13 +346,21 @@ public abstract class ReactiveRepository<T> {
     }
 
     /**
+     * Get the relation loader for this repository
+     * @return The relation loader, or null if none is configured
+     */
+    public ReactiveRelationLoader<T> getRelationLoader() {
+        return relationLoader;
+    }
+
+    /**
      * Loads all relationships for the given entity.
      * Uses ThreadLocal visited set to prevent infinite loops while avoiding memory leaks.
      *
      * @param entity The entity to load relationships for
      * @return A Uni that completes when all relationships are loaded
      */
-    protected Uni<T> loadRelations(T entity) {
+    protected Uni<T> loadRelations(T entity, int currentDepth) {
         if (entity == null || relationLoader == null) {
             return Uni.createFrom().item(entity);
         }
@@ -357,7 +374,29 @@ public abstract class ReactiveRepository<T> {
 
         visited.add(id);
 
-        return relationLoader.loadRelations(entity);
+        return relationLoader.loadRelations(entity, currentDepth);
+    }
+
+    /**
+     * Enhanced loadRelations method that calls the depth-aware version with depth 0
+     */
+    protected Uni<T> loadRelations(T entity) {
+        return loadRelations(entity, 0);
+    }
+
+    private Uni<Object> loadRelationsForAnyEntity(Object entity, int currentDepth) {
+        if (entity == null) {
+            return Uni.createFrom().nullItem();
+        }
+
+        Class<?> entityClass = entity.getClass();
+        ReactiveRepository<Object> repository = (ReactiveRepository<Object>) reactiveRegistry.getReactiveRepository(entityClass);
+
+        if (repository != null && repository.getRelationLoader() != null) {
+            return repository.getRelationLoader().loadRelations(entity, currentDepth);
+        }
+
+        return Uni.createFrom().item(entity);
     }
 
     public EntityMapper<T> getEntityMapper() {
