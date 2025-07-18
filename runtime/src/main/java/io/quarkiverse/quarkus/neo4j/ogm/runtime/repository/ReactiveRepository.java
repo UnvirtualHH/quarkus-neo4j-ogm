@@ -38,7 +38,7 @@ public abstract class ReactiveRepository<T> {
     }
 
     public ReactiveRepository(Driver driver, String label, EntityMapper<T> entityMapper,
-                              ReactiveRepositoryRegistry reactiveRegistry) {
+            ReactiveRepositoryRegistry reactiveRegistry) {
         this.driver = driver;
         this.label = label;
         this.entityMapper = entityMapper;
@@ -347,6 +347,7 @@ public abstract class ReactiveRepository<T> {
 
     /**
      * Get the relation loader for this repository
+     *
      * @return The relation loader, or null if none is configured
      */
     public ReactiveRelationLoader<T> getRelationLoader() {
@@ -390,7 +391,8 @@ public abstract class ReactiveRepository<T> {
         }
 
         Class<?> entityClass = entity.getClass();
-        ReactiveRepository<Object> repository = (ReactiveRepository<Object>) reactiveRegistry.getReactiveRepository(entityClass);
+        ReactiveRepository<Object> repository = (ReactiveRepository<Object>) reactiveRegistry
+                .getReactiveRepository(entityClass);
 
         if (repository != null && repository.getRelationLoader() != null) {
             return repository.getRelationLoader().loadRelations(entity, currentDepth);

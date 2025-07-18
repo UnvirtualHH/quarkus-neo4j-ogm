@@ -1,9 +1,9 @@
 package io.quarkiverse.quarkus.neo4j.ogm.runtime.repository;
 
-import jakarta.enterprise.context.ApplicationScoped;
-
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+
+import jakarta.enterprise.context.ApplicationScoped;
 
 @ApplicationScoped
 public class RepositoryRegistry {

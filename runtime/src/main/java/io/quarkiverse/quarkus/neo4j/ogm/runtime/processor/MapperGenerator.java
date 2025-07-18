@@ -29,7 +29,7 @@ public class MapperGenerator {
     }
 
     public void generateMapper(String packageName, TypeElement entityType, String mapperClassName,
-                               ProcessingEnvironment processingEnv) {
+            ProcessingEnvironment processingEnv) {
         MethodSpec mapMethod = generateMapMethod(entityType, processingEnv);
         MethodSpec toDbMethod = generateToDbMethod(entityType, processingEnv);
         MethodSpec getNodeIdMethod = generateGetNodeIdMethod(entityType);
@@ -59,12 +59,12 @@ public class MapperGenerator {
 
     private boolean shouldFetchRelationship(Relationship rel) {
         return rel.mode() == RelationshipMode.FETCH_ONLY ||
-               rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
+                rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
     }
 
     private boolean shouldPersistRelationship(Relationship rel) {
         return rel.mode() == RelationshipMode.PERSIST_ONLY ||
-               rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
+                rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
     }
 
     private MethodSpec generateMapMethod(TypeElement entityType, ProcessingEnvironment env) {
@@ -241,12 +241,12 @@ public class MapperGenerator {
     private boolean shouldIncludeField(VariableElement field) {
         if (strategy == FieldMappingStrategy.EXPLICIT) {
             return field.getAnnotation(Property.class) != null
-                   || field.getAnnotation(NodeId.class) != null
-                   || field.getAnnotation(Convert.class) != null
-                   || field.getAnnotation(Enumerated.class) != null;
+                    || field.getAnnotation(NodeId.class) != null
+                    || field.getAnnotation(Convert.class) != null
+                    || field.getAnnotation(Enumerated.class) != null;
         } else {
             return field.getAnnotation(Transient.class) == null
-                   && TypeHandlerRegistry.findHandler(field).isPresent();
+                    && TypeHandlerRegistry.findHandler(field).isPresent();
         }
     }
 }

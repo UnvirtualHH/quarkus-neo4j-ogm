@@ -26,7 +26,7 @@ import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
 public class RelationLoaderGenerator {
 
     public void generateRelationLoader(String packageName, TypeElement entityType, String loaderClassName,
-                                       ProcessingEnvironment processingEnv, GenerateRepository.RepositoryType repoType) {
+            ProcessingEnvironment processingEnv, GenerateRepository.RepositoryType repoType) {
         String entityName = entityType.getSimpleName().toString();
         String qualifiedName = entityType.getQualifiedName().toString();
 
@@ -70,11 +70,11 @@ public class RelationLoaderGenerator {
 
     private boolean shouldFetchRelationship(Relationship rel) {
         return rel.mode() == RelationshipMode.FETCH_ONLY ||
-               rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
+                rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
     }
 
     private TypeSpec.Builder buildReactiveClassBase(String packageName, String loaderClassName, String entityName,
-                                                    String qualifiedName) {
+            String qualifiedName) {
         ClassName reactiveRegistryClass = ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository",
                 "ReactiveRepositoryRegistry");
         return TypeSpec.classBuilder(loaderClassName)
@@ -84,7 +84,7 @@ public class RelationLoaderGenerator {
                         ClassName.get(ReactiveRelationLoader.class), ClassName.bestGuess(qualifiedName)))
                 .addField(reactiveRegistryClass, "reactiveRegistry", Modifier.PRIVATE, Modifier.FINAL)
                 .addField(ParameterizedTypeName.get(ClassName.get("java.lang", "ThreadLocal"),
-                                ParameterizedTypeName.get(ClassName.get(Set.class), ClassName.get(Object.class))),
+                        ParameterizedTypeName.get(ClassName.get(Set.class), ClassName.get(Object.class))),
                         "visitedEntities", Modifier.PRIVATE, Modifier.STATIC, Modifier.FINAL)
                 .addStaticBlock(CodeBlock.builder()
                         .addStatement("visitedEntities = $T.withInitial($T::newKeySet)",
@@ -113,7 +113,7 @@ public class RelationLoaderGenerator {
     }
 
     private MethodSpec.Builder buildReactiveLoaderWithDepth(TypeElement entityType, String qualifiedName, Types types,
-                                                            TypeMirror listType) {
+            TypeMirror listType) {
         NodeEntity nodeAnnotation = entityType.getAnnotation(NodeEntity.class);
         String sourceLabel = (nodeAnnotation != null && !nodeAnnotation.label().isEmpty())
                 ? nodeAnnotation.label()
@@ -168,9 +168,10 @@ public class RelationLoaderGenerator {
             if (isList) {
                 unis.addStatement(
                         "$T $L = (currentDepth >= $L) ? $T.createFrom().item(new $T<$T>()) : " +
-                        "reactiveRegistry.getReactiveRepository($T.class).query($S, $T.of(\"id\", id))" +
-                        ".onItem().transformToUniAndMerge(item -> loadRelationRecursively(item, currentDepth + 1).map(loaded -> ($T) loaded))" +
-                        ".collect().asList()",
+                                "reactiveRegistry.getReactiveRepository($T.class).query($S, $T.of(\"id\", id))" +
+                                ".onItem().transformToUniAndMerge(item -> loadRelationRecursively(item, currentDepth + 1).map(loaded -> ($T) loaded))"
+                                +
+                                ".collect().asList()",
                         ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
                                 ParameterizedTypeName.get(ClassName.get(List.class), ClassName.bestGuess(relatedType))),
                         uniVar,
@@ -187,8 +188,8 @@ public class RelationLoaderGenerator {
             } else {
                 unis.addStatement(
                         "$T $L = (currentDepth >= $L) ? $T.createFrom().nullItem() : " +
-                        "reactiveRegistry.getReactiveRepository($T.class).querySingle($S, $T.of(\"id\", id))" +
-                        ".flatMap(item -> item != null ? loadRelationRecursively(item, currentDepth + 1).map(loaded -> ($T) loaded) : $T.createFrom().nullItem())",
+                                "reactiveRegistry.getReactiveRepository($T.class).querySingle($S, $T.of(\"id\", id))" +
+                                ".flatMap(item -> item != null ? loadRelationRecursively(item, currentDepth + 1).map(loaded -> ($T) loaded) : $T.createFrom().nullItem())",
                         ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
                                 ClassName.bestGuess(relatedType)),
                         uniVar,
@@ -246,15 +247,19 @@ public class RelationLoaderGenerator {
                         ClassName.get("io.smallrye.mutiny", "Uni"))
                 .beginControlFlow("try")
                 .addStatement("$T repository = ($T) reactiveRegistry.getReactiveRepository(entity.getClass())",
-                        ParameterizedTypeName.get(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "ReactiveRepository"),
+                        ParameterizedTypeName.get(
+                                ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "ReactiveRepository"),
                                 ClassName.get(Object.class)),
-                        ParameterizedTypeName.get(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "ReactiveRepository"),
+                        ParameterizedTypeName.get(
+                                ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "ReactiveRepository"),
                                 ClassName.get(Object.class)))
                 .beginControlFlow("if (repository != null)")
                 .addStatement("$T loader = ($T) repository.getRelationLoader()",
-                        ParameterizedTypeName.get(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "ReactiveRelationLoader"),
+                        ParameterizedTypeName.get(
+                                ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "ReactiveRelationLoader"),
                                 ClassName.get(Object.class)),
-                        ParameterizedTypeName.get(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "ReactiveRelationLoader"),
+                        ParameterizedTypeName.get(
+                                ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "ReactiveRelationLoader"),
                                 ClassName.get(Object.class)))
                 .beginControlFlow("if (loader != null)")
                 .addStatement("return loader.loadRelations(entity, currentDepth)")
@@ -267,7 +272,7 @@ public class RelationLoaderGenerator {
     }
 
     private TypeSpec.Builder buildImperativeClassBase(String packageName, String loaderClassName, String entityName,
-                                                      String qualifiedName) {
+            String qualifiedName) {
         ClassName repositoryRegistryClass = ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository",
                 "RepositoryRegistry");
         return TypeSpec.classBuilder(loaderClassName)
@@ -277,7 +282,7 @@ public class RelationLoaderGenerator {
                         ClassName.get(RelationLoader.class), ClassName.bestGuess(qualifiedName)))
                 .addField(repositoryRegistryClass, "registry", Modifier.PRIVATE, Modifier.FINAL)
                 .addField(ParameterizedTypeName.get(ClassName.get("java.lang", "ThreadLocal"),
-                                ParameterizedTypeName.get(ClassName.get(Set.class), ClassName.get(Object.class))),
+                        ParameterizedTypeName.get(ClassName.get(Set.class), ClassName.get(Object.class))),
                         "visitedEntities", Modifier.PRIVATE, Modifier.STATIC, Modifier.FINAL)
                 .addStaticBlock(CodeBlock.builder()
                         .addStatement("visitedEntities = $T.withInitial($T::newKeySet)",
@@ -305,7 +310,7 @@ public class RelationLoaderGenerator {
     }
 
     private MethodSpec.Builder buildImperativeLoaderWithDepth(TypeElement entityType, String qualifiedName, Types types,
-                                                              TypeMirror listType) {
+            TypeMirror listType) {
         NodeEntity nodeAnnotation = entityType.getAnnotation(NodeEntity.class);
         String sourceLabel = (nodeAnnotation != null && !nodeAnnotation.label().isEmpty())
                 ? nodeAnnotation.label()
@@ -399,15 +404,19 @@ public class RelationLoaderGenerator {
                 .endControlFlow()
                 .beginControlFlow("try")
                 .addStatement("$T repository = ($T) registry.getRepository(entity.getClass())",
-                        ParameterizedTypeName.get(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "Repository"),
+                        ParameterizedTypeName.get(
+                                ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "Repository"),
                                 ClassName.get(Object.class)),
-                        ParameterizedTypeName.get(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "Repository"),
+                        ParameterizedTypeName.get(
+                                ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "Repository"),
                                 ClassName.get(Object.class)))
                 .beginControlFlow("if (repository != null)")
                 .addStatement("$T loader = ($T) repository.getRelationLoader()",
-                        ParameterizedTypeName.get(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "RelationLoader"),
+                        ParameterizedTypeName.get(
+                                ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "RelationLoader"),
                                 ClassName.get(Object.class)),
-                        ParameterizedTypeName.get(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "RelationLoader"),
+                        ParameterizedTypeName.get(
+                                ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "RelationLoader"),
                                 ClassName.get(Object.class)))
                 .beginControlFlow("if (loader != null)")
                 .addStatement("loader.loadRelations(entity, currentDepth)")

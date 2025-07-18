@@ -10,6 +10,7 @@ import io.smallrye.mutiny.Uni;
 public interface ReactiveRelationLoader<T> {
     /**
      * Load all relationships for the given entity
+     *
      * @param entity The entity to load relationships for
      * @return A Uni that completes when all relationships are loaded
      */
@@ -19,6 +20,7 @@ public interface ReactiveRelationLoader<T> {
 
     /**
      * Load relationships for the given entity up to the specified depth
+     *
      * @param entity The entity to load relationships for
      * @param currentDepth The current traversal depth
      * @return A Uni that completes when all relationships are loaded

@@ -42,7 +42,8 @@ public abstract class Repository<T> {
         this.relationLoader = null;
     }
 
-    public Repository(Driver driver, String label, EntityMapper<T> entityMapper, RepositoryRegistry registry, RelationLoader<T> relationLoader) {
+    public Repository(Driver driver, String label, EntityMapper<T> entityMapper, RepositoryRegistry registry,
+            RelationLoader<T> relationLoader) {
         this.driver = driver;
         this.label = label;
         this.entityMapper = entityMapper;
@@ -54,6 +55,7 @@ public abstract class Repository<T> {
 
     /**
      * Get the relation loader for this repository
+     *
      * @return The relation loader, or null if none is configured
      */
     public RelationLoader<T> getRelationLoader() {
