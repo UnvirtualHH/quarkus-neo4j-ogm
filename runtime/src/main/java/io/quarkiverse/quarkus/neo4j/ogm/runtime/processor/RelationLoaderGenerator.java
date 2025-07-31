@@ -4,8 +4,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.Modifier;
@@ -77,25 +75,23 @@ public class RelationLoaderGenerator {
             String qualifiedName) {
         ClassName reactiveRegistryClass = ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository",
                 "ReactiveRepositoryRegistry");
+        ClassName relationVisitorClass = ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository",
+                "RelationVisitor");
+
         return TypeSpec.classBuilder(loaderClassName)
                 .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
                 .addAnnotation(ClassName.get("jakarta.enterprise.context", "ApplicationScoped"))
                 .addSuperinterface(ParameterizedTypeName.get(
                         ClassName.get(ReactiveRelationLoader.class), ClassName.bestGuess(qualifiedName)))
                 .addField(reactiveRegistryClass, "reactiveRegistry", Modifier.PRIVATE, Modifier.FINAL)
-                .addField(ParameterizedTypeName.get(ClassName.get("java.lang", "ThreadLocal"),
-                        ParameterizedTypeName.get(ClassName.get(Set.class), ClassName.get(Object.class))),
-                        "visitedEntities", Modifier.PRIVATE, Modifier.STATIC, Modifier.FINAL)
-                .addStaticBlock(CodeBlock.builder()
-                        .addStatement("visitedEntities = $T.withInitial($T::newKeySet)",
-                                ClassName.get("java.lang", "ThreadLocal"),
-                                ClassName.get(ConcurrentHashMap.class))
-                        .build())
+                .addField(relationVisitorClass, "relationVisitor", Modifier.PRIVATE, Modifier.FINAL)
                 .addMethod(MethodSpec.constructorBuilder()
                         .addAnnotation(ClassName.get("jakarta.inject", "Inject"))
                         .addModifiers(Modifier.PUBLIC)
                         .addParameter(reactiveRegistryClass, "reactiveRegistry")
+                        .addParameter(relationVisitorClass, "relationVisitor")
                         .addStatement("this.reactiveRegistry = reactiveRegistry")
+                        .addStatement("this.relationVisitor = relationVisitor")
                         .build())
                 .addMethod(MethodSpec.methodBuilder("getNodeId")
                         .addModifiers(Modifier.PRIVATE)
@@ -104,11 +100,6 @@ public class RelationLoaderGenerator {
                         .addStatement(
                                 "return reactiveRegistry.getReactiveRepository($T.class).getEntityMapper().getNodeId(entity)",
                                 ClassName.bestGuess(qualifiedName))
-                        .build())
-                .addMethod(MethodSpec.methodBuilder("clearVisited")
-                        .addModifiers(Modifier.PRIVATE, Modifier.STATIC)
-                        .returns(void.class)
-                        .addStatement("visitedEntities.get().clear()")
                         .build());
     }
 
@@ -130,10 +121,14 @@ public class RelationLoaderGenerator {
                 .beginControlFlow("if (id == null)")
                 .addStatement("return $T.createFrom().item(entity)", ClassName.get("io.smallrye.mutiny", "Uni"))
                 .endControlFlow()
-                .beginControlFlow("if (visitedEntities.get().contains(id))")
+
+                // Use the injected RelationVisitor instead of ThreadLocal
+                .beginControlFlow("if (!relationVisitor.shouldVisit(entity, currentDepth))")
                 .addStatement("return $T.createFrom().item(entity)", ClassName.get("io.smallrye.mutiny", "Uni"))
                 .endControlFlow()
-                .addStatement("visitedEntities.get().add(id)");
+
+                // Mark as visited
+                .addStatement("relationVisitor.markVisited(entity)");
 
         List<String> uniVars = new ArrayList<>();
         CodeBlock.Builder unis = CodeBlock.builder();
@@ -147,6 +142,7 @@ public class RelationLoaderGenerator {
                 continue;
 
             hasRelations = true;
+            String fieldName = field.getSimpleName().toString();
             String setter = resolveSetterName(field);
             String getter = resolveGetterName(field);
 
@@ -164,10 +160,11 @@ public class RelationLoaderGenerator {
             String uniVar = "u" + index;
             uniVars.add(uniVar);
 
-            // Add depth check within the Uni chain
+            // Use the injected RelationVisitor for depth checking
             if (isList) {
                 unis.addStatement(
-                        "$T $L = (currentDepth >= $L) ? $T.createFrom().item(new $T<$T>()) : " +
+                        "$T $L = !relationVisitor.shouldLoadRelationship(entity, $S, currentDepth) ? $T.createFrom().item(new $T<$T>()) : "
+                                +
                                 "reactiveRegistry.getReactiveRepository($T.class).query($S, $T.of(\"id\", id))" +
                                 ".onItem().transformToUniAndMerge(item -> loadRelationRecursively(item, currentDepth + 1).map(loaded -> ($T) loaded))"
                                 +
@@ -175,7 +172,7 @@ public class RelationLoaderGenerator {
                         ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
                                 ParameterizedTypeName.get(ClassName.get(List.class), ClassName.bestGuess(relatedType))),
                         uniVar,
-                        rel.maxDepth(),
+                        fieldName,
                         ClassName.get("io.smallrye.mutiny", "Uni"),
                         ArrayList.class,
                         ClassName.bestGuess(relatedType),
@@ -187,13 +184,14 @@ public class RelationLoaderGenerator {
                 mapping.addStatement("entity.$L(tuple.getItem$L())", setter, index);
             } else {
                 unis.addStatement(
-                        "$T $L = (currentDepth >= $L) ? $T.createFrom().nullItem() : " +
+                        "$T $L = !relationVisitor.shouldLoadRelationship(entity, $S, currentDepth) ? $T.createFrom().nullItem() : "
+                                +
                                 "reactiveRegistry.getReactiveRepository($T.class).querySingle($S, $T.of(\"id\", id))" +
                                 ".flatMap(item -> item != null ? loadRelationRecursively(item, currentDepth + 1).map(loaded -> ($T) loaded) : $T.createFrom().nullItem())",
                         ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
                                 ClassName.bestGuess(relatedType)),
                         uniVar,
-                        rel.maxDepth(),
+                        fieldName,
                         ClassName.get("io.smallrye.mutiny", "Uni"),
                         ClassName.bestGuess(relatedType),
                         query,
@@ -245,6 +243,15 @@ public class RelationLoaderGenerator {
                 .addParameter(int.class, "currentDepth")
                 .addStatement("if (entity == null) return $T.createFrom().nullItem()",
                         ClassName.get("io.smallrye.mutiny", "Uni"))
+
+                // Use the injected RelationVisitor instead of manual checks
+                .beginControlFlow("if (!relationVisitor.shouldVisit(entity, currentDepth))")
+                .addStatement("return $T.createFrom().item(entity)", ClassName.get("io.smallrye.mutiny", "Uni"))
+                .endControlFlow()
+
+                // Mark as visited
+                .addStatement("relationVisitor.markVisited(entity)")
+
                 .beginControlFlow("try")
                 .addStatement("$T repository = ($T) reactiveRegistry.getReactiveRepository(entity.getClass())",
                         ParameterizedTypeName.get(
@@ -275,25 +282,23 @@ public class RelationLoaderGenerator {
             String qualifiedName) {
         ClassName repositoryRegistryClass = ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository",
                 "RepositoryRegistry");
+        ClassName relationVisitorClass = ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository",
+                "RelationVisitor");
+
         return TypeSpec.classBuilder(loaderClassName)
                 .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
                 .addAnnotation(ClassName.get("jakarta.enterprise.context", "ApplicationScoped"))
                 .addSuperinterface(ParameterizedTypeName.get(
                         ClassName.get(RelationLoader.class), ClassName.bestGuess(qualifiedName)))
                 .addField(repositoryRegistryClass, "registry", Modifier.PRIVATE, Modifier.FINAL)
-                .addField(ParameterizedTypeName.get(ClassName.get("java.lang", "ThreadLocal"),
-                        ParameterizedTypeName.get(ClassName.get(Set.class), ClassName.get(Object.class))),
-                        "visitedEntities", Modifier.PRIVATE, Modifier.STATIC, Modifier.FINAL)
-                .addStaticBlock(CodeBlock.builder()
-                        .addStatement("visitedEntities = $T.withInitial($T::newKeySet)",
-                                ClassName.get("java.lang", "ThreadLocal"),
-                                ClassName.get(ConcurrentHashMap.class))
-                        .build())
+                .addField(relationVisitorClass, "relationVisitor", Modifier.PRIVATE, Modifier.FINAL)
                 .addMethod(MethodSpec.constructorBuilder()
                         .addAnnotation(ClassName.get("jakarta.inject", "Inject"))
                         .addModifiers(Modifier.PUBLIC)
                         .addParameter(repositoryRegistryClass, "registry")
+                        .addParameter(relationVisitorClass, "relationVisitor")
                         .addStatement("this.registry = registry")
+                        .addStatement("this.relationVisitor = relationVisitor")
                         .build())
                 .addMethod(MethodSpec.methodBuilder("getNodeId")
                         .addModifiers(Modifier.PRIVATE)
@@ -301,11 +306,6 @@ public class RelationLoaderGenerator {
                         .addParameter(ClassName.bestGuess(qualifiedName), "entity")
                         .addStatement("return registry.getRepository($T.class).getEntityMapper().getNodeId(entity)",
                                 ClassName.bestGuess(qualifiedName))
-                        .build())
-                .addMethod(MethodSpec.methodBuilder("clearVisited")
-                        .addModifiers(Modifier.PRIVATE, Modifier.STATIC)
-                        .returns(void.class)
-                        .addStatement("visitedEntities.get().clear()")
                         .build());
     }
 
@@ -326,16 +326,21 @@ public class RelationLoaderGenerator {
                 .beginControlFlow("if (id == null)")
                 .addStatement("return")
                 .endControlFlow()
-                .beginControlFlow("if (visitedEntities.get().contains(id))")
+
+                // Use the injected RelationVisitor instead of ThreadLocal
+                .beginControlFlow("if (!relationVisitor.shouldVisit(entity, currentDepth))")
                 .addStatement("return")
                 .endControlFlow()
-                .addStatement("visitedEntities.get().add(id)");
+
+                // Mark as visited
+                .addStatement("relationVisitor.markVisited(entity)");
 
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             Relationship rel = field.getAnnotation(Relationship.class);
             if (rel == null || !shouldFetchRelationship(rel))
                 continue;
 
+            String fieldName = field.getSimpleName().toString();
             String getter = resolveGetterName(field);
             String setter = resolveSetterName(field);
             String fieldType = field.asType().toString();
@@ -348,11 +353,11 @@ public class RelationLoaderGenerator {
 
             String query = buildQuery(sourceLabel, rel.direction(), rel.type(), relatedSimple);
 
-            builder.addComment("Loading relation $L (max depth: $L, current: $L)",
-                    field.getSimpleName(), rel.maxDepth(), "currentDepth");
+            builder.addComment("Loading relation $L (max depth: $L)", fieldName, rel.maxDepth());
 
-            // Add depth check
-            builder.beginControlFlow("if (currentDepth >= $L)", rel.maxDepth());
+            // Use the injected RelationVisitor to check relationship depth limits
+            builder.beginControlFlow("if (!relationVisitor.shouldLoadRelationship(entity, $S, currentDepth))", fieldName);
+
             if (isList) {
                 builder.addStatement("entity.$L(new $T<>())", setter, ArrayList.class);
             } else {
@@ -402,6 +407,15 @@ public class RelationLoaderGenerator {
                 .beginControlFlow("if (entity == null)")
                 .addStatement("return")
                 .endControlFlow()
+
+                // Use the injected RelationVisitor instead of manual checks
+                .beginControlFlow("if (!relationVisitor.shouldVisit(entity, currentDepth))")
+                .addStatement("return")
+                .endControlFlow()
+
+                // Mark as visited using the injected RelationVisitor
+                .addStatement("relationVisitor.markVisited(entity)")
+
                 .beginControlFlow("try")
                 .addStatement("$T repository = ($T) registry.getRepository(entity.getClass())",
                         ParameterizedTypeName.get(

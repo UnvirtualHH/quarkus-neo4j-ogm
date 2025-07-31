@@ -41,22 +41,25 @@ public class RepositoryGenerator {
         boolean hasRelationships = entityType.getEnclosedElements().stream()
                 .anyMatch(e -> e.getAnnotation(io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.Relationship.class) != null);
 
-        // Build constructor with RelationLoader if needed
+        // Build constructor with RelationVisitor injection - ALWAYS include RelationVisitor
         MethodSpec.Builder constructorBuilder = MethodSpec.constructorBuilder()
                 .addAnnotation(Inject.class)
                 .addModifiers(Modifier.PUBLIC)
                 .addParameter(ClassName.get("org.neo4j.driver", "Driver"), "driver")
                 .addParameter(ClassName.get(packageName, mapperClassName), "entityMapper")
                 .addParameter(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "RepositoryRegistry"),
-                        "registry");
+                        "registry")
+                .addParameter(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "RelationVisitor"),
+                        "relationVisitor");
 
         if (hasRelationships) {
             String loaderClassName = entityType.getSimpleName() + "RelationLoader";
             constructorBuilder
                     .addParameter(ClassName.get(packageName, loaderClassName), "relationLoader")
-                    .addStatement("super(driver, $S, entityMapper, registry, relationLoader)", label);
+                    .addStatement("super(driver, $S, entityMapper, registry, relationLoader, relationVisitor)", label);
         } else {
-            constructorBuilder.addStatement("super(driver, $S, entityMapper, registry)", label);
+            // Even without relationships, we need to pass the RelationVisitor
+            constructorBuilder.addStatement("super(driver, $S, entityMapper, registry, relationVisitor)", label);
         }
 
         MethodSpec constructor = constructorBuilder.build();
