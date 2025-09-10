@@ -18,20 +18,28 @@ public class InstantTypeHandler implements TypeHandler {
     @Override
     public CodeBlock generateSetterCode(VariableElement field, String targetVar, String valueSource) {
         return CodeBlock.of(
-                "$L.$L($L.get($S).asZonedDateTime().toInstant());\n",
-                targetVar,
-                resolveSetterName(field),
-                valueSource,
-                getPropertyName(field));
+                "if ($L.get($S) != null && !$L.get($S).isNull()) { " +
+                        "  $L.$L($L.get($S).asZonedDateTime().toInstant()); " +
+                        "} else { " +
+                        "  $L.$L(null); " +
+                        "} \n",
+                valueSource, getPropertyName(field),
+                valueSource, getPropertyName(field),
+                targetVar, resolveSetterName(field), valueSource, getPropertyName(field),
+                targetVar, resolveSetterName(field));
     }
 
     @Override
     public CodeBlock generateToDbCode(VariableElement field, String entityVar, String mapVar) {
         return CodeBlock.of(
-                "$L.put($S, $L.$L());\n",
-                mapVar,
-                getPropertyName(field),
-                entityVar,
-                resolveGetterName(field));
+                "if ($L.$L() != null) { " +
+                        "  $L.put($S, java.time.ZonedDateTime.ofInstant($L.$L(), java.time.ZoneOffset.UTC)); " +
+                        "} else { " +
+                        "  $L.put($S, null); " +
+                        "}\n",
+                entityVar, resolveGetterName(field),
+                mapVar, getPropertyName(field),
+                entityVar, resolveGetterName(field),
+                mapVar, getPropertyName(field));
     }
 }

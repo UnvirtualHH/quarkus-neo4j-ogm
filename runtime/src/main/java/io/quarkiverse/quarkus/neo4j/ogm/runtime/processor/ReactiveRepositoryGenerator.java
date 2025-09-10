@@ -9,10 +9,16 @@ import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
-import com.palantir.javapoet.*;
+import com.palantir.javapoet.ClassName;
+import com.palantir.javapoet.JavaFile;
+import com.palantir.javapoet.MethodSpec;
+import com.palantir.javapoet.ParameterizedTypeName;
+import com.palantir.javapoet.TypeName;
+import com.palantir.javapoet.TypeSpec;
 
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.ReturnType;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.Queries;
@@ -37,12 +43,12 @@ public class ReactiveRepositoryGenerator {
                 .addModifiers(Modifier.PUBLIC)
                 .build();
 
-        // Check if the entity has relationships
+        // Detect relationships on the entity
         boolean hasRelationships = entityType.getEnclosedElements().stream()
                 .anyMatch(e -> e.getAnnotation(io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.Relationship.class) != null);
 
-        // Build constructor with RelationVisitor injection - ALWAYS include RelationVisitor
-        MethodSpec.Builder constructorBuilder = MethodSpec.constructorBuilder()
+        // Constructor: always inject RelationVisitor
+        MethodSpec.Builder ctor = MethodSpec.constructorBuilder()
                 .addAnnotation(Inject.class)
                 .addModifiers(Modifier.PUBLIC)
                 .addParameter(ClassName.get("org.neo4j.driver", "Driver"), "driver")
@@ -55,24 +61,20 @@ public class ReactiveRepositoryGenerator {
 
         if (hasRelationships) {
             String loaderClassName = entityType.getSimpleName() + "ReactiveRelationLoader";
-            constructorBuilder
-                    .addParameter(ClassName.get(packageName, loaderClassName), "relationLoader")
+            ctor.addParameter(ClassName.get(packageName, loaderClassName), "relationLoader")
                     .addStatement("super(driver, $S, entityMapper, reactiveRegistry, relationLoader, relationVisitor)", label);
         } else {
-            // Even without relationships, we need to pass the RelationVisitor
-            constructorBuilder.addStatement("super(driver, $S, entityMapper, reactiveRegistry, relationVisitor)", label);
+            ctor.addStatement("super(driver, $S, entityMapper, reactiveRegistry, relationVisitor)", label);
         }
 
-        MethodSpec constructor = constructorBuilder.build();
-
-        TypeSpec.Builder repositoryClassBuilder = TypeSpec.classBuilder(repositoryClassName)
+        TypeSpec.Builder repoClass = TypeSpec.classBuilder(repositoryClassName)
                 .addAnnotation(ApplicationScoped.class)
                 .addAnnotation(ClassName.get("io.quarkus.runtime", "Startup"))
                 .addModifiers(Modifier.PUBLIC)
                 .addMethod(noArgsConstructor)
-                .addMethod(constructor)
+                .addMethod(ctor.build())
                 .addMethod(MethodSpec.methodBuilder("registerSelf")
-                        .addAnnotation(ClassName.get("jakarta.annotation", "PostConstruct"))
+                        .addAnnotation(PostConstruct.class)
                         .addStatement("reactiveRegistry.register($T.class, this)", entityType)
                         .build())
                 .superclass(ParameterizedTypeName.get(
@@ -83,70 +85,102 @@ public class ReactiveRepositoryGenerator {
 
         Queries queriesAnnotation = entityType.getAnnotation(Queries.class);
         if (queriesAnnotation != null) {
-            for (Query query : queriesAnnotation.value()) {
-                String methodName = query.name();
-                String cypherQuery = query.cypher();
-                ReturnType returnType = query.returnType();
+            for (Query q : queriesAnnotation.value()) {
+                String methodName = q.name();
+                String cypher = q.cypher();
+                ReturnType returnType = q.returnType();
 
-                Matcher matcher = PARAM_PATTERN.matcher(cypherQuery);
+                // Try to read boolean transactional() reflectively (keeps bw-compat if not present at runtime)
+                boolean transactional = false;
+                try {
+                    transactional = (boolean) Query.class.getMethod("transactional").invoke(q);
+                } catch (Exception ignored) {
+                    // default false
+                }
+
+                // Extract $param names in Cypher
+                Matcher matcher = PARAM_PATTERN.matcher(cypher);
                 Set<String> paramNames = new LinkedHashSet<>();
                 while (matcher.find()) {
                     paramNames.add(matcher.group(1));
                 }
 
-                MethodSpec.Builder methodBuilder = MethodSpec.methodBuilder(methodName)
-                        .addModifiers(Modifier.PUBLIC)
-                        .addStatement("String query = $S", cypherQuery);
-
-                for (String paramName : paramNames) {
-                    methodBuilder.addParameter(String.class, paramName);
+                // Guardrail: no write-tx multi-return supported by current API
+                if (transactional && returnType == ReturnType.LIST) {
+                    processingEnv.getMessager().printMessage(
+                            javax.tools.Diagnostic.Kind.ERROR,
+                            "Cannot generate method '" + methodName + "': @Query(transactional=true) with returnType=LIST " +
+                                    "is not supported because ReactiveRepository exposes only executeSingle(...) and execute(...) (void). "
+                                    +
+                                    "Either change returnType to SINGLE or extend ReactiveRepository with a write-tx list API.");
+                    // Skip generating this method to avoid producing uncompilable code
+                    continue;
                 }
 
-                StringBuilder mapBuilder = new StringBuilder();
+                MethodSpec.Builder mb = MethodSpec.methodBuilder(methodName)
+                        .addModifiers(Modifier.PUBLIC)
+                        .addStatement("String query = $S", cypher);
+
+                // Parameters as Object (allows non-string)
+                for (String p : paramNames) {
+                    mb.addParameter(Object.class, p);
+                }
+
+                // Build Map.of("k1", v1, "k2", v2, ...)
+                StringBuilder mapFmt = new StringBuilder();
                 List<Object> mapArgs = new ArrayList<>();
-                for (String paramName : paramNames) {
-                    if (!mapBuilder.isEmpty()) {
-                        mapBuilder.append(", ");
-                    }
-                    mapBuilder.append("$S, $L");
-                    mapArgs.add(paramName); // Key
-                    mapArgs.add(paramName); // Value
+                for (String p : paramNames) {
+                    if (!mapFmt.isEmpty())
+                        mapFmt.append(", ");
+                    mapFmt.append("$S, $L");
+                    mapArgs.add(p);
+                    mapArgs.add(p);
                 }
 
                 if (returnType == ReturnType.LIST) {
-                    methodBuilder.returns(ParameterizedTypeName.get(
+                    // read-only multi
+                    mb.returns(ParameterizedTypeName.get(
                             ClassName.get("io.smallrye.mutiny", "Multi"),
                             TypeName.get(entityType.asType())));
-                    methodBuilder.addStatement("return query(query, $T.of(" + mapBuilder + "))",
-                            concatArrays(ClassName.get("java.util", "Map"), mapArgs));
+                    if (paramNames.isEmpty()) {
+                        mb.addStatement("return query(query)");
+                    } else {
+                        mb.addStatement("return query(query, $T.of(" + mapFmt + "))",
+                                concatArrays(ClassName.get("java.util", "Map"), mapArgs));
+                    }
                 } else {
-                    methodBuilder.returns(ParameterizedTypeName.get(
+                    // SINGLE: use executeSingle for transactional, querySingle otherwise
+                    mb.returns(ParameterizedTypeName.get(
                             ClassName.get("io.smallrye.mutiny", "Uni"),
                             TypeName.get(entityType.asType())));
-                    methodBuilder.addStatement("return querySingle(query, $T.of(" + mapBuilder + "))",
-                            concatArrays(ClassName.get("java.util", "Map"), mapArgs));
+                    String repoCall = transactional ? "executeSingle" : "querySingle";
+                    if (paramNames.isEmpty()) {
+                        mb.addStatement("return $L(query)", repoCall);
+                    } else {
+                        mb.addStatement("return $L(query, $T.of(" + mapFmt + "))",
+                                repoCall, concatArrays(ClassName.get("java.util", "Map"), mapArgs));
+                    }
                 }
 
-                generatedMethods.add(methodBuilder.build());
+                generatedMethods.add(mb.build());
             }
         }
 
-        for (MethodSpec method : generatedMethods) {
-            repositoryClassBuilder.addMethod(method);
+        // Add generated methods
+        for (MethodSpec m : generatedMethods) {
+            repoClass.addMethod(m);
         }
 
-        MethodSpec getEntityTypeMethod = MethodSpec.methodBuilder("getEntityType")
+        // getEntityType()
+        repoClass.addMethod(MethodSpec.methodBuilder("getEntityType")
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PROTECTED)
                 .returns(ParameterizedTypeName.get(ClassName.get(Class.class), TypeName.get(entityType.asType())))
                 .addStatement("return $T.class", TypeName.get(entityType.asType()))
-                .build();
+                .build());
 
-        repositoryClassBuilder.addMethod(getEntityTypeMethod);
-
-        TypeSpec repositoryClass = repositoryClassBuilder.build();
-        JavaFile javaFile = JavaFile.builder(packageName, repositoryClass).build();
-
+        // Write file
+        JavaFile javaFile = JavaFile.builder(packageName, repoClass.build()).build();
         try {
             javaFile.writeTo(processingEnv.getFiler());
             processingEnv.getMessager().printMessage(javax.tools.Diagnostic.Kind.NOTE,

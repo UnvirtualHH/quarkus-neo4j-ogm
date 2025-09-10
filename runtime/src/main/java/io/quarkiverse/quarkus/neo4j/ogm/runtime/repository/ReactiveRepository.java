@@ -37,7 +37,7 @@ public abstract class ReactiveRepository<T> {
     }
 
     public ReactiveRepository(Driver driver, String label, EntityMapper<T> entityMapper,
-                              ReactiveRepositoryRegistry reactiveRegistry) {
+            ReactiveRepositoryRegistry reactiveRegistry) {
         this.driver = driver;
         this.label = label;
         this.entityMapper = entityMapper;
@@ -47,7 +47,7 @@ public abstract class ReactiveRepository<T> {
     }
 
     public ReactiveRepository(Driver driver, String label, EntityMapper<T> entityMapper,
-                              ReactiveRepositoryRegistry reactiveRegistry, RelationVisitor relationVisitor) {
+            ReactiveRepositoryRegistry reactiveRegistry, RelationVisitor relationVisitor) {
         this.driver = driver;
         this.label = label;
         this.entityMapper = entityMapper;
@@ -57,8 +57,8 @@ public abstract class ReactiveRepository<T> {
     }
 
     public ReactiveRepository(Driver driver, String label, EntityMapper<T> entityMapper,
-                              ReactiveRepositoryRegistry reactiveRegistry, ReactiveRelationLoader<T> relationLoader,
-                              RelationVisitor relationVisitor) {
+            ReactiveRepositoryRegistry reactiveRegistry, ReactiveRelationLoader<T> relationLoader,
+            RelationVisitor relationVisitor) {
         this.driver = driver;
         this.label = label;
         this.entityMapper = entityMapper;
@@ -319,13 +319,13 @@ public abstract class ReactiveRepository<T> {
 
     private Uni<Void> runWriteQueryVoid(String cypher, Map<String, Object> params) {
         return Multi.createFrom().resource(
-                        () -> driver.session(ReactiveSession.class),
-                        session -> session.executeWrite(tx -> {
-                            var result = tx.run(cypher, Values.value(params));
-                            return Multi.createFrom().publisher(result)
-                                    .flatMap(ReactiveResult::consume)
-                                    .flatMap(ignore -> Multi.createFrom().item((Void) null));
-                        }))
+                () -> driver.session(ReactiveSession.class),
+                session -> session.executeWrite(tx -> {
+                    var result = tx.run(cypher, Values.value(params));
+                    return Multi.createFrom().publisher(result)
+                            .flatMap(ReactiveResult::consume)
+                            .flatMap(ignore -> Multi.createFrom().item((Void) null));
+                }))
                 .withFinalizer(closeSession())
                 .toUni()
                 .onFailure().transform(throwable -> new RepositoryException("Failed to execute write query", throwable));
@@ -333,13 +333,13 @@ public abstract class ReactiveRepository<T> {
 
     private <R> Uni<R> runScalarReadQuery(String cypher, Map<String, Object> params, Function<Record, R> mapper) {
         return Multi.createFrom().resource(
-                        () -> driver.session(ReactiveSession.class),
-                        session -> session.executeRead(tx -> {
-                            var result = tx.run(cypher, Values.value(params));
-                            return Multi.createFrom().publisher(result)
-                                    .flatMap(ReactiveResult::records)
-                                    .map(mapper);
-                        }))
+                () -> driver.session(ReactiveSession.class),
+                session -> session.executeRead(tx -> {
+                    var result = tx.run(cypher, Values.value(params));
+                    return Multi.createFrom().publisher(result)
+                            .flatMap(ReactiveResult::records)
+                            .map(mapper);
+                }))
                 .withFinalizer(closeSession())
                 .toUni()
                 .onFailure().transform(throwable -> new RepositoryException("Failed to execute scalar query", throwable));
@@ -347,16 +347,16 @@ public abstract class ReactiveRepository<T> {
 
     private Multi<Record> runQueryInternal(String cypher, Map<String, Object> params, boolean readOnly) {
         return Multi.createFrom().resource(
-                        () -> driver.session(ReactiveSession.class),
-                        session -> {
-                            if (readOnly) {
-                                return session.executeRead(tx -> Multi.createFrom().publisher(tx.run(cypher, Values.value(params)))
-                                        .flatMap(ReactiveResult::records));
-                            } else {
-                                return session.executeWrite(tx -> Multi.createFrom().publisher(tx.run(cypher, Values.value(params)))
-                                        .flatMap(ReactiveResult::records));
-                            }
-                        })
+                () -> driver.session(ReactiveSession.class),
+                session -> {
+                    if (readOnly) {
+                        return session.executeRead(tx -> Multi.createFrom().publisher(tx.run(cypher, Values.value(params)))
+                                .flatMap(ReactiveResult::records));
+                    } else {
+                        return session.executeWrite(tx -> Multi.createFrom().publisher(tx.run(cypher, Values.value(params)))
+                                .flatMap(ReactiveResult::records));
+                    }
+                })
                 .withFinalizer(closeSession())
                 .onFailure().transform(throwable -> new RepositoryException("Failed to execute query", throwable));
     }
@@ -392,13 +392,13 @@ public abstract class ReactiveRepository<T> {
                                     return Uni.createFrom().voidItem();
                                 String query = switch (rel.getDirection()) {
                                     case OUTGOING ->
-                                            "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)-[r:" + rel.getType()
-                                            + "]->(b)";
+                                        "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)-[r:" + rel.getType()
+                                                + "]->(b)";
                                     case INCOMING ->
-                                            "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)<-[r:" + rel.getType()
-                                            + "]-(b)";
+                                        "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)<-[r:" + rel.getType()
+                                                + "]-(b)";
                                     default ->
-                                            throw new UnsupportedOperationException("Unsupported direction: " + rel.getDirection());
+                                        throw new UnsupportedOperationException("Unsupported direction: " + rel.getDirection());
                                 };
                                 return runWriteQueryVoid(query, Map.of("from", fromId, "to", toId));
                             })

@@ -15,4 +15,6 @@ public @interface Query {
     String cypher();
 
     ReturnType returnType() default ReturnType.SINGLE;
+
+    boolean transactional() default false;
 }
