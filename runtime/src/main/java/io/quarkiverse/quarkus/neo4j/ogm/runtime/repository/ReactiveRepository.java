@@ -17,6 +17,7 @@ import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Paged;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Sortable;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
+import io.smallrye.mutiny.unchecked.Unchecked;
 
 public abstract class ReactiveRepository<T> {
 
@@ -386,7 +387,7 @@ public abstract class ReactiveRepository<T> {
                 .collect().asList()
                 .flatMap(list -> {
                     return Multi.createFrom().iterable(relationships)
-                            .onItem().transformToUniAndMerge(rel -> {
+                            .onItem().transformToUniAndMerge(Unchecked.function(rel -> {
                                 Object toId = rel.getTargetId();
                                 if (toId == null)
                                     return Uni.createFrom().voidItem();
@@ -401,7 +402,7 @@ public abstract class ReactiveRepository<T> {
                                         throw new UnsupportedOperationException("Unsupported direction: " + rel.getDirection());
                                 };
                                 return runWriteQueryVoid(query, Map.of("from", fromId, "to", toId));
-                            })
+                            }))
                             .collect().asList()
                             .replaceWithVoid();
                 });
@@ -428,9 +429,6 @@ public abstract class ReactiveRepository<T> {
         if (!relationVisitor.shouldVisit(entity, currentDepth)) {
             return Uni.createFrom().item(entity);
         }
-
-        // Mark entity as visited
-        relationVisitor.markVisited(entity);
 
         // Delegate to the generated relation loader
         return relationLoader.loadRelations(entity, currentDepth);
