@@ -10,7 +10,7 @@ import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.Relationship;
 
 /**
  * Application-scoped visitor that manages entity relationship traversal using ThreadLocal.
- * This approach is compatible with @ApplicationScoped repositories and relation loaders.
+ * Prevents infinite recursion via depth limit and circular reference detection.
  */
 @ApplicationScoped
 public class RelationVisitor {
@@ -26,14 +26,19 @@ public class RelationVisitor {
     private static final Map<Class<?>, List<RelationshipInfo>> RELATIONSHIP_CACHE = new ConcurrentHashMap<>();
 
     /**
+     * Default max depth (can be overridden per relation via @Relationship)
+     */
+    private static final int DEFAULT_MAX_DEPTH = 5;
+
+    /**
      * CDI constructor
      */
     public RelationVisitor() {
-        // CDI will handle instantiation
+        // CDI instantiates
     }
 
     /**
-     * Check if an entity should be visited based on depth and circular reference rules
+     * Check if an entity should be visited based on depth and circular reference rules.
      */
     public boolean shouldVisit(Object entity, int currentDepth) {
         if (entity == null) {
@@ -43,17 +48,35 @@ public class RelationVisitor {
         VisitorContext context = CONTEXT.get();
         Object entityId = extractEntityId(entity);
 
-        // Check circular references
-        if (entityId != null && context.visitedIds.contains(entityId)) {
-            context.stats.circularReferencesPrevented++;
+        // Depth limit
+        if (currentDepth > context.maxDepth) {
+            context.stats.depthLimitHits++;
+            if (context.debug) {
+                System.out.printf("Skip visiting %s at depth %d (depth limit=%d)%n",
+                        entity.getClass().getSimpleName(), currentDepth, context.maxDepth);
+            }
             return false;
         }
 
-        // Fallback to object identity if no ID
+        // Circular reference by ID
+        if (entityId != null && context.visitedIds.contains(entityId)) {
+            context.stats.circularReferencesPrevented++;
+            if (context.debug) {
+                System.out.printf("Skip circular visit of %s[id=%s]%n",
+                        entity.getClass().getSimpleName(), entityId);
+            }
+            return false;
+        }
+
+        // Circular reference by identity (no ID)
         if (entityId == null) {
             IdentityWrapper wrapper = new IdentityWrapper(entity);
             if (context.visitedObjects.contains(wrapper)) {
                 context.stats.circularReferencesPrevented++;
+                if (context.debug) {
+                    System.out.printf("Skip circular visit of %s (object identity)%n",
+                            entity.getClass().getSimpleName());
+                }
                 return false;
             }
         }
@@ -62,7 +85,7 @@ public class RelationVisitor {
     }
 
     /**
-     * Check if a specific relationship should be loaded based on its depth annotation
+     * Check if a specific relationship should be loaded based on its depth annotation.
      */
     public boolean shouldLoadRelationship(Object entity, String fieldName, int currentDepth) {
         List<RelationshipInfo> relationships = getRelationshipInfo(entity.getClass());
@@ -71,17 +94,22 @@ public class RelationVisitor {
             if (info.fieldName.equals(fieldName)) {
                 if (currentDepth >= info.maxDepth) {
                     CONTEXT.get().stats.depthLimitHits++;
+                    if (CONTEXT.get().debug) {
+                        System.out.printf("Skip loading relation %s.%s at depth %d (maxDepth=%d)%n",
+                                entity.getClass().getSimpleName(), fieldName, currentDepth, info.maxDepth);
+                    }
                     return false;
                 }
                 return true;
             }
         }
 
-        return true; // Default to true if no specific depth limit found
+        // No @Relationship -> allow
+        return true;
     }
 
     /**
-     * Mark an entity as visited
+     * Mark an entity as visited.
      */
     public void markVisited(Object entity) {
         if (entity == null)
@@ -97,8 +125,6 @@ public class RelationVisitor {
         }
 
         context.stats.entitiesVisited++;
-
-        // Track traversal path for debugging
         context.traversalPath.add(new TraversalStep(
                 entity.getClass().getSimpleName(),
                 entityId,
@@ -106,7 +132,7 @@ public class RelationVisitor {
     }
 
     /**
-     * Check if entity was already visited
+     * Check if entity was already visited.
      */
     public boolean wasVisited(Object entity) {
         if (entity == null)
@@ -114,36 +140,36 @@ public class RelationVisitor {
 
         VisitorContext context = CONTEXT.get();
         Object entityId = extractEntityId(entity);
+
         if (entityId != null) {
             return context.visitedIds.contains(entityId);
         }
-
         return context.visitedObjects.contains(new IdentityWrapper(entity));
     }
 
     /**
-     * Get current traversal depth
+     * Get current traversal depth.
      */
     public int getCurrentDepth() {
         return CONTEXT.get().traversalPath.size();
     }
 
     /**
-     * Get traversal path (for debugging)
+     * Get traversal path (for debugging).
      */
     public List<TraversalStep> getTraversalPath() {
         return new ArrayList<>(CONTEXT.get().traversalPath);
     }
 
     /**
-     * Get visitor statistics
+     * Get visitor statistics.
      */
     public VisitorStats getStats() {
         return CONTEXT.get().stats.copy();
     }
 
     /**
-     * Reset visitor state (called after each repository operation)
+     * Reset visitor state (called after each repository operation).
      */
     public void reset() {
         VisitorContext context = CONTEXT.get();
@@ -151,10 +177,18 @@ public class RelationVisitor {
         context.visitedObjects.clear();
         context.traversalPath.clear();
         context.stats.reset();
+        context.maxDepth = DEFAULT_MAX_DEPTH;
     }
 
     /**
-     * Clear ThreadLocal context to prevent memory leaks
+     * Enable or disable debug logging.
+     */
+    public void setDebug(boolean enabled) {
+        CONTEXT.get().debug = enabled;
+    }
+
+    /**
+     * Clear ThreadLocal context to prevent memory leaks.
      */
     public void clearContext() {
         CONTEXT.remove();
@@ -162,9 +196,6 @@ public class RelationVisitor {
 
     // ========================= Private Helper Methods =========================
 
-    /**
-     * Extract entity ID using common patterns
-     */
     private Object extractEntityId(Object entity) {
         if (entity == null)
             return null;
@@ -172,7 +203,7 @@ public class RelationVisitor {
         try {
             Class<?> clazz = entity.getClass();
 
-            // Try common ID field names
+            // Common ID field names
             String[] idFieldNames = { "id", "ID", "_id", "entityId" };
             for (String fieldName : idFieldNames) {
                 try {
@@ -180,34 +211,26 @@ public class RelationVisitor {
                     field.setAccessible(true);
                     return field.get(entity);
                 } catch (NoSuchFieldException ignored) {
-                    // Try next field name
                 }
             }
 
-            // Try getId method
+            // Try getId() method
             try {
                 return clazz.getMethod("getId").invoke(entity);
             } catch (NoSuchMethodException ignored) {
-                // No getId method
             }
 
         } catch (Exception e) {
-            // Fall back to null
+            // ignore
         }
 
         return null;
     }
 
-    /**
-     * Get relationship information for an entity class (cached)
-     */
     private static List<RelationshipInfo> getRelationshipInfo(Class<?> entityClass) {
         return RELATIONSHIP_CACHE.computeIfAbsent(entityClass, clazz -> {
             List<RelationshipInfo> relationships = new ArrayList<>();
-
-            // Scan all fields for @Relationship annotations
-            Field[] fields = clazz.getDeclaredFields();
-            for (Field field : fields) {
+            for (Field field : clazz.getDeclaredFields()) {
                 Relationship rel = field.getAnnotation(Relationship.class);
                 if (rel != null) {
                     relationships.add(new RelationshipInfo(
@@ -217,26 +240,21 @@ public class RelationVisitor {
                             rel.direction()));
                 }
             }
-
             return relationships;
         });
     }
 
     // ========================= Inner Classes =========================
 
-    /**
-     * Thread-local context for visitor state
-     */
     private static class VisitorContext {
         final Set<Object> visitedIds = ConcurrentHashMap.newKeySet();
         final Set<IdentityWrapper> visitedObjects = ConcurrentHashMap.newKeySet();
         final List<TraversalStep> traversalPath = new ArrayList<>();
         final VisitorStats stats = new VisitorStats();
+        int maxDepth = DEFAULT_MAX_DEPTH;
+        boolean debug = false;
     }
 
-    /**
-     * Cached relationship information
-     */
     private static class RelationshipInfo {
         final String fieldName;
         final int maxDepth;
@@ -252,9 +270,6 @@ public class RelationVisitor {
         }
     }
 
-    /**
-     * Object identity wrapper
-     */
     private static class IdentityWrapper {
         private final Object obj;
         private final int identityHashCode;
@@ -266,12 +281,7 @@ public class RelationVisitor {
 
         @Override
         public boolean equals(Object other) {
-            if (this == other)
-                return true;
-            if (!(other instanceof IdentityWrapper))
-                return false;
-            IdentityWrapper that = (IdentityWrapper) other;
-            return obj == that.obj; // Reference equality
+            return other instanceof IdentityWrapper && ((IdentityWrapper) other).obj == obj;
         }
 
         @Override
@@ -280,9 +290,6 @@ public class RelationVisitor {
         }
     }
 
-    /**
-     * Traversal step for debugging
-     */
     public static class TraversalStep {
         private final String entityType;
         private final Object entityId;
@@ -318,9 +325,6 @@ public class RelationVisitor {
         }
     }
 
-    /**
-     * Visitor statistics
-     */
     public static class VisitorStats {
         private int entitiesVisited = 0;
         private int circularReferencesPrevented = 0;

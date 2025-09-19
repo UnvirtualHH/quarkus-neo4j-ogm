@@ -9,7 +9,6 @@ import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 
-import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -43,38 +42,46 @@ public class ReactiveRepositoryGenerator {
                 .addModifiers(Modifier.PUBLIC)
                 .build();
 
-        // Detect relationships on the entity
+        // Check if the entity has relationships
         boolean hasRelationships = entityType.getEnclosedElements().stream()
                 .anyMatch(e -> e.getAnnotation(io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.Relationship.class) != null);
 
-        // Constructor: always inject RelationVisitor
-        MethodSpec.Builder ctor = MethodSpec.constructorBuilder()
+        // Build constructor
+        MethodSpec.Builder constructorBuilder = MethodSpec.constructorBuilder()
                 .addAnnotation(Inject.class)
                 .addModifiers(Modifier.PUBLIC)
                 .addParameter(ClassName.get("org.neo4j.driver", "Driver"), "driver")
                 .addParameter(ClassName.get(packageName, mapperClassName), "entityMapper")
                 .addParameter(
                         ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "ReactiveRepositoryRegistry"),
-                        "reactiveRegistry")
-                .addParameter(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "RelationVisitor"),
-                        "relationVisitor");
+                        "reactiveRegistry");
 
         if (hasRelationships) {
             String loaderClassName = entityType.getSimpleName() + "ReactiveRelationLoader";
-            ctor.addParameter(ClassName.get(packageName, loaderClassName), "relationLoader")
-                    .addStatement("super(driver, $S, entityMapper, reactiveRegistry, relationLoader, relationVisitor)", label);
-        } else {
-            ctor.addStatement("super(driver, $S, entityMapper, reactiveRegistry, relationVisitor)", label);
+            constructorBuilder.addParameter(ClassName.get(packageName, loaderClassName), "relationLoader");
         }
 
-        TypeSpec.Builder repoClass = TypeSpec.classBuilder(repositoryClassName)
+        constructorBuilder.addParameter(
+                ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "RelationVisitor"),
+                "relationVisitor");
+
+        if (hasRelationships) {
+            constructorBuilder
+                    .addStatement("super(driver, $S, entityMapper, reactiveRegistry, relationLoader, relationVisitor)", label);
+        } else {
+            constructorBuilder.addStatement("super(driver, $S, entityMapper, reactiveRegistry, relationVisitor)", label);
+        }
+
+        MethodSpec constructor = constructorBuilder.build();
+
+        TypeSpec.Builder repositoryClassBuilder = TypeSpec.classBuilder(repositoryClassName)
                 .addAnnotation(ApplicationScoped.class)
                 .addAnnotation(ClassName.get("io.quarkus.runtime", "Startup"))
                 .addModifiers(Modifier.PUBLIC)
                 .addMethod(noArgsConstructor)
-                .addMethod(ctor.build())
+                .addMethod(constructor)
                 .addMethod(MethodSpec.methodBuilder("registerSelf")
-                        .addAnnotation(PostConstruct.class)
+                        .addAnnotation(ClassName.get("jakarta.annotation", "PostConstruct"))
                         .addStatement("reactiveRegistry.register($T.class, this)", entityType)
                         .build())
                 .superclass(ParameterizedTypeName.get(
@@ -87,100 +94,94 @@ public class ReactiveRepositoryGenerator {
         if (queriesAnnotation != null) {
             for (Query q : queriesAnnotation.value()) {
                 String methodName = q.name();
-                String cypher = q.cypher();
+                String cypherQuery = q.cypher();
                 ReturnType returnType = q.returnType();
 
-                // Try to read boolean transactional() reflectively (keeps bw-compat if not present at runtime)
                 boolean transactional = false;
                 try {
                     transactional = (boolean) Query.class.getMethod("transactional").invoke(q);
                 } catch (Exception ignored) {
-                    // default false
                 }
 
-                // Extract $param names in Cypher
-                Matcher matcher = PARAM_PATTERN.matcher(cypher);
+                // Extract $param names
+                Matcher matcher = PARAM_PATTERN.matcher(cypherQuery);
                 Set<String> paramNames = new LinkedHashSet<>();
                 while (matcher.find()) {
                     paramNames.add(matcher.group(1));
                 }
 
-                // Guardrail: no write-tx multi-return supported by current API
+                // Guardrail
                 if (transactional && returnType == ReturnType.LIST) {
                     processingEnv.getMessager().printMessage(
                             javax.tools.Diagnostic.Kind.ERROR,
-                            "Cannot generate method '" + methodName + "': @Query(transactional=true) with returnType=LIST " +
-                                    "is not supported because ReactiveRepository exposes only executeSingle(...) and execute(...) (void). "
-                                    +
-                                    "Either change returnType to SINGLE or extend ReactiveRepository with a write-tx list API.");
-                    // Skip generating this method to avoid producing uncompilable code
+                            "Cannot generate reactive method '" + methodName +
+                                    "': @Query(transactional=true) with returnType=LIST not supported.");
                     continue;
                 }
 
-                MethodSpec.Builder mb = MethodSpec.methodBuilder(methodName)
+                MethodSpec.Builder methodBuilder = MethodSpec.methodBuilder(methodName)
                         .addModifiers(Modifier.PUBLIC)
-                        .addStatement("String query = $S", cypher);
+                        .addStatement("String query = $S", cypherQuery);
 
-                // Parameters as Object (allows non-string)
-                for (String p : paramNames) {
-                    mb.addParameter(Object.class, p);
-                }
-
-                // Build Map.of("k1", v1, "k2", v2, ...)
-                StringBuilder mapFmt = new StringBuilder();
-                List<Object> mapArgs = new ArrayList<>();
-                for (String p : paramNames) {
-                    if (!mapFmt.isEmpty())
-                        mapFmt.append(", ");
-                    mapFmt.append("$S, $L");
-                    mapArgs.add(p);
-                    mapArgs.add(p);
+                for (String paramName : paramNames) {
+                    methodBuilder.addParameter(Object.class, paramName);
                 }
 
                 if (returnType == ReturnType.LIST) {
-                    // read-only multi
-                    mb.returns(ParameterizedTypeName.get(
-                            ClassName.get("io.smallrye.mutiny", "Multi"),
-                            TypeName.get(entityType.asType())));
+                    methodBuilder
+                            .returns(ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
+                                    ParameterizedTypeName.get(ClassName.get(List.class), TypeName.get(entityType.asType()))));
+
                     if (paramNames.isEmpty()) {
-                        mb.addStatement("return query(query)");
+                        methodBuilder.addStatement("return queryList(query)");
                     } else {
-                        mb.addStatement("return query(query, $T.of(" + mapFmt + "))",
-                                concatArrays(ClassName.get("java.util", "Map"), mapArgs));
+                        StringBuilder mapConstruction = new StringBuilder();
+                        mapConstruction.append("$T<String, Object> params = new $T<>();");
+                        for (String paramName : paramNames) {
+                            mapConstruction.append("\nparams.put($S, $L);");
+                        }
+                        Object[] args = concatMapArgs(paramNames.toArray(new String[0]));
+                        methodBuilder.addStatement(mapConstruction.toString(), args);
+                        methodBuilder.addStatement("return queryList(query, params)");
                     }
                 } else {
-                    // SINGLE: use executeSingle for transactional, querySingle otherwise
-                    mb.returns(ParameterizedTypeName.get(
-                            ClassName.get("io.smallrye.mutiny", "Uni"),
+                    methodBuilder.returns(ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
                             TypeName.get(entityType.asType())));
                     String repoCall = transactional ? "executeSingle" : "querySingle";
                     if (paramNames.isEmpty()) {
-                        mb.addStatement("return $L(query)", repoCall);
+                        methodBuilder.addStatement("return $L(query)", repoCall);
                     } else {
-                        mb.addStatement("return $L(query, $T.of(" + mapFmt + "))",
-                                repoCall, concatArrays(ClassName.get("java.util", "Map"), mapArgs));
+                        StringBuilder mapConstruction = new StringBuilder();
+                        mapConstruction.append("$T<String, Object> params = new $T<>();");
+                        for (String paramName : paramNames) {
+                            mapConstruction.append("\nparams.put($S, $L);");
+                        }
+                        Object[] args = concatMapArgs(paramNames.toArray(new String[0]));
+                        methodBuilder.addStatement(mapConstruction.toString(), args);
+                        methodBuilder.addStatement("return $L(query, params)", repoCall);
                     }
                 }
 
-                generatedMethods.add(mb.build());
+                generatedMethods.add(methodBuilder.build());
             }
         }
 
-        // Add generated methods
-        for (MethodSpec m : generatedMethods) {
-            repoClass.addMethod(m);
+        for (MethodSpec method : generatedMethods) {
+            repositoryClassBuilder.addMethod(method);
         }
 
-        // getEntityType()
-        repoClass.addMethod(MethodSpec.methodBuilder("getEntityType")
+        MethodSpec getEntityTypeMethod = MethodSpec.methodBuilder("getEntityType")
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PROTECTED)
                 .returns(ParameterizedTypeName.get(ClassName.get(Class.class), TypeName.get(entityType.asType())))
                 .addStatement("return $T.class", TypeName.get(entityType.asType()))
-                .build());
+                .build();
 
-        // Write file
-        JavaFile javaFile = JavaFile.builder(packageName, repoClass.build()).build();
+        repositoryClassBuilder.addMethod(getEntityTypeMethod);
+
+        TypeSpec repositoryClass = repositoryClassBuilder.build();
+        JavaFile javaFile = JavaFile.builder(packageName, repositoryClass).build();
+
         try {
             javaFile.writeTo(processingEnv.getFiler());
             processingEnv.getMessager().printMessage(javax.tools.Diagnostic.Kind.NOTE,
@@ -191,12 +192,14 @@ public class ReactiveRepositoryGenerator {
         }
     }
 
-    private static Object[] concatArrays(Object first, List<Object> rest) {
-        Object[] result = new Object[1 + rest.size()];
-        result[0] = first;
-        for (int i = 0; i < rest.size(); i++) {
-            result[i + 1] = rest.get(i);
+    private static Object[] concatMapArgs(String[] paramNames) {
+        List<Object> args = new ArrayList<>();
+        args.add(ClassName.get("java.util", "Map"));
+        args.add(ClassName.get("java.util", "HashMap"));
+        for (String paramName : paramNames) {
+            args.add(paramName);
+            args.add(paramName);
         }
-        return result;
+        return args.toArray();
     }
 }

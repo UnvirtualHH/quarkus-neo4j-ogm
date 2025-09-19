@@ -21,21 +21,27 @@ import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Direction;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.RelationshipMode;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
 
+/**
+ * Code generator for relation loaders (imperative and reactive).
+ *
+ * Generates classes that handle recursive relationship loading using {@link RelationVisitor}.
+ */
 public class RelationLoaderGenerator {
 
     public void generateRelationLoader(String packageName, TypeElement entityType, String loaderClassName,
             ProcessingEnvironment processingEnv, GenerateRepository.RepositoryType repoType) {
-        String entityName = entityType.getSimpleName().toString();
         String qualifiedName = entityType.getQualifiedName().toString();
 
+        // Check if entity has any relationships that should be fetched
         boolean hasRelationships = ElementFilter.fieldsIn(entityType.getEnclosedElements()).stream()
                 .anyMatch(f -> {
                     Relationship rel = f.getAnnotation(Relationship.class);
                     return rel != null && shouldFetchRelationship(rel);
                 });
 
-        if (!hasRelationships)
+        if (!hasRelationships) {
             return;
+        }
 
         Types types = processingEnv.getTypeUtils();
         Elements elements = processingEnv.getElementUtils();
@@ -45,13 +51,13 @@ public class RelationLoaderGenerator {
         boolean isReactive = repoType == GenerateRepository.RepositoryType.REACTIVE;
 
         if (isReactive) {
-            classBuilder = buildReactiveClassBase(packageName, loaderClassName, entityName, qualifiedName);
+            classBuilder = buildReactiveClassBase(loaderClassName, qualifiedName);
             classBuilder.addMethod(buildReactiveLoaderWithDepth(entityType, qualifiedName, types, listType).build());
-            classBuilder.addMethod(buildReactiveRecursiveLoader(entityType, qualifiedName).build());
+            classBuilder.addMethod(buildReactiveRecursiveLoader().build());
         } else {
-            classBuilder = buildImperativeClassBase(packageName, loaderClassName, entityName, qualifiedName);
+            classBuilder = buildImperativeClassBase(loaderClassName, qualifiedName);
             classBuilder.addMethod(buildImperativeLoaderWithDepth(entityType, qualifiedName, types, listType).build());
-            classBuilder.addMethod(buildImperativeRecursiveLoader(entityType, qualifiedName).build());
+            classBuilder.addMethod(buildImperativeRecursiveLoader().build());
         }
 
         try {
@@ -67,12 +73,15 @@ public class RelationLoaderGenerator {
     }
 
     private boolean shouldFetchRelationship(Relationship rel) {
-        return rel.mode() == RelationshipMode.FETCH_ONLY ||
-                rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
+        return rel.mode() == RelationshipMode.FETCH_ONLY
+                || rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
     }
 
-    private TypeSpec.Builder buildReactiveClassBase(String packageName, String loaderClassName, String entityName,
-            String qualifiedName) {
+    // =====================================================================================
+    // Reactive Loader
+    // =====================================================================================
+
+    private TypeSpec.Builder buildReactiveClassBase(String loaderClassName, String qualifiedName) {
         ClassName reactiveRegistryClass = ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository",
                 "ReactiveRepositoryRegistry");
         ClassName relationVisitorClass = ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository",
@@ -103,8 +112,8 @@ public class RelationLoaderGenerator {
                         .build());
     }
 
-    private MethodSpec.Builder buildReactiveLoaderWithDepth(TypeElement entityType, String qualifiedName, Types types,
-            TypeMirror listType) {
+    private MethodSpec.Builder buildReactiveLoaderWithDepth(TypeElement entityType, String qualifiedName,
+            Types types, TypeMirror listType) {
         NodeEntity nodeAnnotation = entityType.getAnnotation(NodeEntity.class);
         String sourceLabel = (nodeAnnotation != null && !nodeAnnotation.label().isEmpty())
                 ? nodeAnnotation.label()
@@ -118,16 +127,13 @@ public class RelationLoaderGenerator {
                 .addParameter(ClassName.bestGuess(qualifiedName), "entity")
                 .addParameter(int.class, "currentDepth")
                 .addStatement("Object id = getNodeId(entity)")
+                // IMPORTANT: no reset() here; do it at repository entry point
                 .beginControlFlow("if (id == null)")
                 .addStatement("return $T.createFrom().item(entity)", ClassName.get("io.smallrye.mutiny", "Uni"))
                 .endControlFlow()
-
-                // Use the injected RelationVisitor instead of ThreadLocal
                 .beginControlFlow("if (!relationVisitor.shouldVisit(entity, currentDepth))")
                 .addStatement("return $T.createFrom().item(entity)", ClassName.get("io.smallrye.mutiny", "Uni"))
                 .endControlFlow()
-
-                // Mark as visited
                 .addStatement("relationVisitor.markVisited(entity)");
 
         List<String> uniVars = new ArrayList<>();
@@ -138,13 +144,13 @@ public class RelationLoaderGenerator {
 
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             Relationship rel = field.getAnnotation(Relationship.class);
-            if (rel == null || !shouldFetchRelationship(rel))
+            if (rel == null || !shouldFetchRelationship(rel)) {
                 continue;
+            }
 
             hasRelations = true;
             String fieldName = field.getSimpleName().toString();
             String setter = resolveSetterName(field);
-            String getter = resolveGetterName(field);
 
             String fieldType = field.asType().toString();
             boolean isList = types.isAssignable(field.asType(), types.erasure(listType));
@@ -160,15 +166,15 @@ public class RelationLoaderGenerator {
             String uniVar = "u" + index;
             uniVars.add(uniVar);
 
-            // Use the injected RelationVisitor for depth checking
+            CodeBlock mapOf = CodeBlock.of("$T.of($S, id)", ClassName.get(Map.class), "id");
+
             if (isList) {
                 unis.addStatement(
-                        "$T $L = !relationVisitor.shouldLoadRelationship(entity, $S, currentDepth) ? $T.createFrom().item(new $T<$T>()) : "
-                                +
-                                "reactiveRegistry.getReactiveRepository($T.class).query($S, $T.of(\"id\", id))" +
-                                ".onItem().transformToUniAndMerge(item -> loadRelationRecursively(item, currentDepth + 1).map(loaded -> ($T) loaded))"
-                                +
-                                ".collect().asList()",
+                        "$T $L = !relationVisitor.shouldLoadRelationship(entity, $S, currentDepth) ? "
+                                + "$T.createFrom().item(new $T<$T>()) : "
+                                + "reactiveRegistry.getReactiveRepository($T.class).query($S, $L)"
+                                + ".onItem().transformToUniAndMerge(item -> loadRelationRecursively(item, currentDepth + 1).map(loaded -> ($T) loaded))"
+                                + ".collect().asList()",
                         ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
                                 ParameterizedTypeName.get(ClassName.get(List.class), ClassName.bestGuess(relatedType))),
                         uniVar,
@@ -178,16 +184,16 @@ public class RelationLoaderGenerator {
                         ClassName.bestGuess(relatedType),
                         ClassName.bestGuess(relatedType),
                         query,
-                        ClassName.get(Map.class),
+                        mapOf,
                         ClassName.bestGuess(relatedType));
 
                 mapping.addStatement("entity.$L(tuple.getItem$L())", setter, index);
             } else {
                 unis.addStatement(
-                        "$T $L = !relationVisitor.shouldLoadRelationship(entity, $S, currentDepth) ? $T.createFrom().nullItem() : "
-                                +
-                                "reactiveRegistry.getReactiveRepository($T.class).querySingle($S, $T.of(\"id\", id))" +
-                                ".flatMap(item -> item != null ? loadRelationRecursively(item, currentDepth + 1).map(loaded -> ($T) loaded) : $T.createFrom().nullItem())",
+                        "$T $L = !relationVisitor.shouldLoadRelationship(entity, $S, currentDepth) ? "
+                                + "$T.createFrom().nullItem() : "
+                                + "reactiveRegistry.getReactiveRepository($T.class).querySingle($S, $L)"
+                                + ".flatMap(item -> item != null ? loadRelationRecursively(item, currentDepth + 1).map(loaded -> ($T) loaded) : $T.createFrom().nullItem())",
                         ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
                                 ClassName.bestGuess(relatedType)),
                         uniVar,
@@ -195,7 +201,7 @@ public class RelationLoaderGenerator {
                         ClassName.get("io.smallrye.mutiny", "Uni"),
                         ClassName.bestGuess(relatedType),
                         query,
-                        ClassName.get(Map.class),
+                        mapOf,
                         ClassName.bestGuess(relatedType),
                         ClassName.get("io.smallrye.mutiny", "Uni"));
 
@@ -213,9 +219,7 @@ public class RelationLoaderGenerator {
         builder.addCode(unis.build());
 
         if (uniVars.size() == 1) {
-            String setterCode = mapping.build().toString()
-                    .replace("tuple.getItem1()", "result");
-
+            String setterCode = mapping.build().toString().replace("tuple.getItem1()", "result");
             builder.addStatement("return $L.map(result -> {\n$L\n    return entity;\n})",
                     uniVars.get(0),
                     indent(setterCode, 1));
@@ -231,7 +235,7 @@ public class RelationLoaderGenerator {
         return builder;
     }
 
-    private MethodSpec.Builder buildReactiveRecursiveLoader(TypeElement entityType, String qualifiedName) {
+    private MethodSpec.Builder buildReactiveRecursiveLoader() {
         return MethodSpec.methodBuilder("loadRelationRecursively")
                 .addModifiers(Modifier.PRIVATE)
                 .addAnnotation(AnnotationSpec.builder(SuppressWarnings.class)
@@ -243,15 +247,10 @@ public class RelationLoaderGenerator {
                 .addParameter(int.class, "currentDepth")
                 .addStatement("if (entity == null) return $T.createFrom().nullItem()",
                         ClassName.get("io.smallrye.mutiny", "Uni"))
-
-                // Use the injected RelationVisitor instead of manual checks
                 .beginControlFlow("if (!relationVisitor.shouldVisit(entity, currentDepth))")
                 .addStatement("return $T.createFrom().item(entity)", ClassName.get("io.smallrye.mutiny", "Uni"))
                 .endControlFlow()
-
-                // Mark as visited
                 .addStatement("relationVisitor.markVisited(entity)")
-
                 .beginControlFlow("try")
                 .addStatement("$T repository = ($T) reactiveRegistry.getReactiveRepository(entity.getClass())",
                         ParameterizedTypeName.get(
@@ -269,7 +268,8 @@ public class RelationLoaderGenerator {
                                 ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "ReactiveRelationLoader"),
                                 ClassName.get(Object.class)))
                 .beginControlFlow("if (loader != null)")
-                .addStatement("return loader.loadRelations(entity, currentDepth)")
+                // FIX: advance depth when switching loaders
+                .addStatement("return loader.loadRelations(entity, currentDepth + 1)")
                 .endControlFlow()
                 .endControlFlow()
                 .nextControlFlow("catch (Exception e)")
@@ -278,8 +278,11 @@ public class RelationLoaderGenerator {
                 .addStatement("return $T.createFrom().item(entity)", ClassName.get("io.smallrye.mutiny", "Uni"));
     }
 
-    private TypeSpec.Builder buildImperativeClassBase(String packageName, String loaderClassName, String entityName,
-            String qualifiedName) {
+    // =====================================================================================
+    // Imperative Loader
+    // =====================================================================================
+
+    private TypeSpec.Builder buildImperativeClassBase(String loaderClassName, String qualifiedName) {
         ClassName repositoryRegistryClass = ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository",
                 "RepositoryRegistry");
         ClassName relationVisitorClass = ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository",
@@ -309,8 +312,8 @@ public class RelationLoaderGenerator {
                         .build());
     }
 
-    private MethodSpec.Builder buildImperativeLoaderWithDepth(TypeElement entityType, String qualifiedName, Types types,
-            TypeMirror listType) {
+    private MethodSpec.Builder buildImperativeLoaderWithDepth(TypeElement entityType, String qualifiedName,
+            Types types, TypeMirror listType) {
         NodeEntity nodeAnnotation = entityType.getAnnotation(NodeEntity.class);
         String sourceLabel = (nodeAnnotation != null && !nodeAnnotation.label().isEmpty())
                 ? nodeAnnotation.label()
@@ -323,22 +326,20 @@ public class RelationLoaderGenerator {
                 .addParameter(ClassName.bestGuess(qualifiedName), "entity")
                 .addParameter(int.class, "currentDepth")
                 .addStatement("Object id = getNodeId(entity)")
+                // IMPORTANT: no reset() here; do it at repository entry point
                 .beginControlFlow("if (id == null)")
                 .addStatement("return")
                 .endControlFlow()
-
-                // Use the injected RelationVisitor instead of ThreadLocal
                 .beginControlFlow("if (!relationVisitor.shouldVisit(entity, currentDepth))")
                 .addStatement("return")
                 .endControlFlow()
-
-                // Mark as visited
                 .addStatement("relationVisitor.markVisited(entity)");
 
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             Relationship rel = field.getAnnotation(Relationship.class);
-            if (rel == null || !shouldFetchRelationship(rel))
+            if (rel == null || !shouldFetchRelationship(rel)) {
                 continue;
+            }
 
             String fieldName = field.getSimpleName().toString();
             String getter = resolveGetterName(field);
@@ -348,14 +349,14 @@ public class RelationLoaderGenerator {
             String relatedType = isList
                     ? fieldType.substring(fieldType.indexOf('<') + 1, fieldType.lastIndexOf('>'))
                     : fieldType;
-            String relatedSimple = relatedType.contains(".") ? relatedType.substring(relatedType.lastIndexOf('.') + 1)
+            String relatedSimple = relatedType.contains(".")
+                    ? relatedType.substring(relatedType.lastIndexOf('.') + 1)
                     : relatedType;
 
             String query = buildQuery(sourceLabel, rel.direction(), rel.type(), relatedSimple);
+            CodeBlock mapOf = CodeBlock.of("$T.of($S, id)", ClassName.get(Map.class), "id");
 
             builder.addComment("Loading relation $L (max depth: $L)", fieldName, rel.maxDepth());
-
-            // Use the injected RelationVisitor to check relationship depth limits
             builder.beginControlFlow("if (!relationVisitor.shouldLoadRelationship(entity, $S, currentDepth))", fieldName);
 
             if (isList) {
@@ -370,32 +371,31 @@ public class RelationLoaderGenerator {
             builder.addStatement("String query = $S", query);
 
             if (isList) {
-                builder.addStatement("var results = repository.query(query, $T.of(\"id\", id))", Map.class);
+                builder.addStatement("var results = repository.query(query, $L)", mapOf);
                 builder.addStatement("if (entity.$L() == null) entity.$L(new $T<>())", getter, setter, ArrayList.class);
                 builder.addStatement("entity.$L().addAll(results)", getter);
-                builder.addComment("Load nested relationships for list items");
                 builder.beginControlFlow("for (var item : entity.$L())", getter);
                 builder.addStatement("loadRelationRecursively(item, currentDepth + 1)");
                 builder.endControlFlow();
             } else {
-                builder.addStatement("var result = repository.querySingle(query, $T.of(\"id\", id))", Map.class);
+                builder.addStatement("var result = repository.querySingle(query, $L)", mapOf);
                 builder.addStatement("entity.$L(result)", setter);
-                builder.addComment("Load nested relationships for single item");
                 builder.beginControlFlow("if (result != null)");
                 builder.addStatement("loadRelationRecursively(result, currentDepth + 1)");
                 builder.endControlFlow();
             }
 
             builder.nextControlFlow("catch (Exception e)")
-                    .addStatement("throw new RuntimeException(\"Failed to load relation: $L\", e)", rel.type())
+                    .addStatement("throw new RuntimeException($S, e)",
+                            String.format("Failed to load relation: %s", rel.type()))
                     .endControlFlow()
-                    .endControlFlow(); // end else
+                    .endControlFlow();
         }
 
         return builder;
     }
 
-    private MethodSpec.Builder buildImperativeRecursiveLoader(TypeElement entityType, String qualifiedName) {
+    private MethodSpec.Builder buildImperativeRecursiveLoader() {
         return MethodSpec.methodBuilder("loadRelationRecursively")
                 .addModifiers(Modifier.PRIVATE)
                 .addAnnotation(AnnotationSpec.builder(SuppressWarnings.class)
@@ -407,15 +407,10 @@ public class RelationLoaderGenerator {
                 .beginControlFlow("if (entity == null)")
                 .addStatement("return")
                 .endControlFlow()
-
-                // Use the injected RelationVisitor instead of manual checks
                 .beginControlFlow("if (!relationVisitor.shouldVisit(entity, currentDepth))")
                 .addStatement("return")
                 .endControlFlow()
-
-                // Mark as visited using the injected RelationVisitor
                 .addStatement("relationVisitor.markVisited(entity)")
-
                 .beginControlFlow("try")
                 .addStatement("$T repository = ($T) registry.getRepository(entity.getClass())",
                         ParameterizedTypeName.get(
@@ -433,13 +428,18 @@ public class RelationLoaderGenerator {
                                 ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping", "RelationLoader"),
                                 ClassName.get(Object.class)))
                 .beginControlFlow("if (loader != null)")
-                .addStatement("loader.loadRelations(entity, currentDepth)")
+                // FIX: advance depth when switching loaders
+                .addStatement("loader.loadRelations(entity, currentDepth + 1)")
                 .endControlFlow()
                 .endControlFlow()
                 .nextControlFlow("catch (Exception e)")
                 .addStatement("// Ignore errors in recursive loading")
                 .endControlFlow();
     }
+
+    // =====================================================================================
+    // Helpers
+    // =====================================================================================
 
     private String buildQuery(String sourceLabel, Direction direction, String relationType, String targetLabel) {
         String left = direction == Direction.INCOMING ? "<-" : "-";

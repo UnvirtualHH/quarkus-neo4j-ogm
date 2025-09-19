@@ -13,6 +13,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
 import com.palantir.javapoet.ClassName;
+import com.palantir.javapoet.CodeBlock;
 import com.palantir.javapoet.JavaFile;
 import com.palantir.javapoet.MethodSpec;
 import com.palantir.javapoet.ParameterizedTypeName;
@@ -46,24 +47,27 @@ public class RepositoryGenerator {
         boolean hasRelationships = entityType.getEnclosedElements().stream()
                 .anyMatch(e -> e.getAnnotation(io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.Relationship.class) != null);
 
-        // Build constructor with RelationVisitor injection - ALWAYS include RelationVisitor
+        // Build constructor with proper parameter order: loader vor visitor
         MethodSpec.Builder constructorBuilder = MethodSpec.constructorBuilder()
                 .addAnnotation(Inject.class)
                 .addModifiers(Modifier.PUBLIC)
                 .addParameter(ClassName.get("org.neo4j.driver", "Driver"), "driver")
                 .addParameter(ClassName.get(packageName, mapperClassName), "entityMapper")
                 .addParameter(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "RepositoryRegistry"),
-                        "registry")
-                .addParameter(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "RelationVisitor"),
-                        "relationVisitor");
+                        "registry");
 
         if (hasRelationships) {
             String loaderClassName = entityType.getSimpleName() + "RelationLoader";
-            constructorBuilder
-                    .addParameter(ClassName.get(packageName, loaderClassName), "relationLoader")
-                    .addStatement("super(driver, $S, entityMapper, registry, relationLoader, relationVisitor)", label);
+            constructorBuilder.addParameter(ClassName.get(packageName, loaderClassName), "relationLoader");
+        }
+
+        constructorBuilder.addParameter(ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "RelationVisitor"),
+                "relationVisitor");
+
+        if (hasRelationships) {
+            constructorBuilder.addStatement("super(driver, $S, entityMapper, registry, relationLoader, relationVisitor)",
+                    label);
         } else {
-            // Even without relationships, we need to pass the RelationVisitor
             constructorBuilder.addStatement("super(driver, $S, entityMapper, registry, relationVisitor)", label);
         }
 
@@ -92,30 +96,26 @@ public class RepositoryGenerator {
                 String cypherQuery = q.cypher();
                 ReturnType returnType = q.returnType();
 
-                // Try to read boolean transactional() reflectively (keeps bw-compat if not present at runtime)
+                // Try to read boolean transactional() reflectively
                 boolean transactional = false;
                 try {
                     transactional = (boolean) Query.class.getMethod("transactional").invoke(q);
                 } catch (Exception ignored) {
-                    // default false
                 }
 
-                // Extract $param names in Cypher
+                // Extract $param names
                 Matcher matcher = PARAM_PATTERN.matcher(cypherQuery);
-                Set<String> paramNames = new LinkedHashSet<>();
+                List<String> paramNames = new ArrayList<>();
                 while (matcher.find()) {
                     paramNames.add(matcher.group(1));
                 }
 
-                // Guardrail: no write-tx list-return supported by current non-reactive API
+                // Guardrail
                 if (transactional && returnType == ReturnType.LIST) {
                     processingEnv.getMessager().printMessage(
                             javax.tools.Diagnostic.Kind.ERROR,
                             "Cannot generate method '" + methodName + "': @Query(transactional=true) with returnType=LIST " +
-                                    "is not supported because Repository exposes only executeSingle(...) and execute(...) (void). "
-                                    +
-                                    "Either change returnType to SINGLE or extend Repository with a write-tx list API.");
-                    // Skip generating this method
+                                    "is not supported.");
                     continue;
                 }
 
@@ -123,42 +123,38 @@ public class RepositoryGenerator {
                         .addModifiers(Modifier.PUBLIC)
                         .addStatement("String query = $S", cypherQuery);
 
-                // Generate method parameters as Object (allows non-string values)
                 for (String paramName : paramNames) {
                     methodBuilder.addParameter(Object.class, paramName);
                 }
 
-                // Build Map.of("k1", v1, "k2", v2, ...)
-                StringBuilder mapBuilder = new StringBuilder();
-                List<Object> mapArgs = new ArrayList<>();
+                // Build CodeBlock für Map.of(...)
+                CodeBlock.Builder mapArgs = CodeBlock.builder();
+                boolean first = true;
                 for (String paramName : paramNames) {
-                    if (!mapBuilder.isEmpty()) {
-                        mapBuilder.append(", ");
+                    if (!first) {
+                        mapArgs.add(", ");
                     }
-                    mapBuilder.append("$S, $L");
-                    mapArgs.add(paramName); // Key
-                    mapArgs.add(paramName); // Value
+                    mapArgs.add("$S, $L", paramName, paramName);
+                    first = false;
                 }
 
                 if (returnType == ReturnType.LIST) {
-                    // Read-only list
                     methodBuilder
                             .returns(ParameterizedTypeName.get(ClassName.get(List.class), TypeName.get(entityType.asType())));
                     if (paramNames.isEmpty()) {
                         methodBuilder.addStatement("return query(query)");
                     } else {
-                        methodBuilder.addStatement("return query(query, $T.of(" + mapBuilder + "))",
-                                concatArrays(ClassName.get("java.util", "Map"), mapArgs));
+                        methodBuilder.addStatement("return query(query, $T.of(" + mapArgs.build() + "))",
+                                ClassName.get(Map.class));
                     }
                 } else {
-                    // SINGLE: use executeSingle for transactional, querySingle otherwise
                     methodBuilder.returns(TypeName.get(entityType.asType()));
                     String repoCall = transactional ? "executeSingle" : "querySingle";
                     if (paramNames.isEmpty()) {
                         methodBuilder.addStatement("return $L(query)", repoCall);
                     } else {
-                        methodBuilder.addStatement("return $L(query, $T.of(" + mapBuilder + "))",
-                                repoCall, concatArrays(ClassName.get("java.util", "Map"), mapArgs));
+                        methodBuilder.addStatement("return $L(query, $T.of(" + mapArgs.build() + "))",
+                                repoCall, ClassName.get(Map.class));
                     }
                 }
 
@@ -190,14 +186,5 @@ public class RepositoryGenerator {
             processingEnv.getMessager().printMessage(javax.tools.Diagnostic.Kind.ERROR,
                     "Failed to generate repository: " + e.getMessage());
         }
-    }
-
-    private static Object[] concatArrays(Object first, List<Object> rest) {
-        Object[] result = new Object[1 + rest.size()];
-        result[0] = first;
-        for (int i = 0; i < rest.size(); i++) {
-            result[i + 1] = rest.get(i);
-        }
-        return result;
     }
 }

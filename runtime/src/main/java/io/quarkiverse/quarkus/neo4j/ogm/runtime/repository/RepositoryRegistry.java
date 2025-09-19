@@ -5,6 +5,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import jakarta.enterprise.context.ApplicationScoped;
 
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationLoader;
+
 @ApplicationScoped
 public class RepositoryRegistry {
 
@@ -29,4 +31,15 @@ public class RepositoryRegistry {
         return registry.containsKey(type);
     }
 
+    /**
+     * Direct access to the RelationLoader for an entity type, if available.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> RelationLoader<T> getLoader(Class<T> entityType) {
+        Repository<?> repo = registry.get(entityType);
+        if (repo == null) {
+            throw new IllegalStateException("No repository registered for type: " + entityType.getName());
+        }
+        return (RelationLoader<T>) repo.getRelationLoader();
+    }
 }
