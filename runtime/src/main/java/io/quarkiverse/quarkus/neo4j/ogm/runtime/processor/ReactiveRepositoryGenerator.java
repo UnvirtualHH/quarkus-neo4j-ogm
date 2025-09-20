@@ -37,16 +37,17 @@ public class ReactiveRepositoryGenerator {
 
         String fullClassName = packageName + "." + repositoryClassName;
 
+        // no-args constructor (for CDI proxies)
         MethodSpec noArgsConstructor = MethodSpec.constructorBuilder()
                 .addStatement("super()")
                 .addModifiers(Modifier.PUBLIC)
                 .build();
 
-        // Check if the entity has relationships
+        // Does this entity have relationships?
         boolean hasRelationships = entityType.getEnclosedElements().stream()
                 .anyMatch(e -> e.getAnnotation(io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.Relationship.class) != null);
 
-        // Build constructor
+        // constructor
         MethodSpec.Builder constructorBuilder = MethodSpec.constructorBuilder()
                 .addAnnotation(Inject.class)
                 .addModifiers(Modifier.PUBLIC)
@@ -61,15 +62,17 @@ public class ReactiveRepositoryGenerator {
             constructorBuilder.addParameter(ClassName.get(packageName, loaderClassName), "relationLoader");
         }
 
+        // NEW: use ReactiveRelationVisitor instead of RelationVisitor
         constructorBuilder.addParameter(
-                ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "RelationVisitor"),
+                ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "ReactiveRelationVisitor"),
                 "relationVisitor");
 
         if (hasRelationships) {
-            constructorBuilder
-                    .addStatement("super(driver, $S, entityMapper, reactiveRegistry, relationLoader, relationVisitor)", label);
+            constructorBuilder.addStatement(
+                    "super(driver, $S, entityMapper, reactiveRegistry, relationLoader, relationVisitor)", label);
         } else {
-            constructorBuilder.addStatement("super(driver, $S, entityMapper, reactiveRegistry, relationVisitor)", label);
+            constructorBuilder.addStatement(
+                    "super(driver, $S, entityMapper, reactiveRegistry, relationVisitor)", label);
         }
 
         MethodSpec constructor = constructorBuilder.build();
@@ -88,6 +91,7 @@ public class ReactiveRepositoryGenerator {
                         ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "ReactiveRepository"),
                         TypeName.get(entityType.asType())));
 
+        // generate custom query methods
         List<MethodSpec> generatedMethods = new ArrayList<>();
 
         Queries queriesAnnotation = entityType.getAnnotation(Queries.class);
@@ -129,8 +133,10 @@ public class ReactiveRepositoryGenerator {
 
                 if (returnType == ReturnType.LIST) {
                     methodBuilder
-                            .returns(ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
-                                    ParameterizedTypeName.get(ClassName.get(List.class), TypeName.get(entityType.asType()))));
+                            .returns(ParameterizedTypeName.get(
+                                    ClassName.get("io.smallrye.mutiny", "Uni"),
+                                    ParameterizedTypeName.get(ClassName.get(List.class),
+                                            TypeName.get(entityType.asType()))));
 
                     if (paramNames.isEmpty()) {
                         methodBuilder.addStatement("return queryList(query)");
@@ -145,7 +151,8 @@ public class ReactiveRepositoryGenerator {
                         methodBuilder.addStatement("return queryList(query, params)");
                     }
                 } else {
-                    methodBuilder.returns(ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
+                    methodBuilder.returns(ParameterizedTypeName.get(
+                            ClassName.get("io.smallrye.mutiny", "Uni"),
                             TypeName.get(entityType.asType())));
                     String repoCall = transactional ? "executeSingle" : "querySingle";
                     if (paramNames.isEmpty()) {
@@ -170,6 +177,7 @@ public class ReactiveRepositoryGenerator {
             repositoryClassBuilder.addMethod(method);
         }
 
+        // getEntityType
         MethodSpec getEntityTypeMethod = MethodSpec.methodBuilder("getEntityType")
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PROTECTED)

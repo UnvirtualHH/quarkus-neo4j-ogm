@@ -341,9 +341,6 @@ public abstract class Repository<T> {
             return;
         }
 
-        // Mark entity as visited
-        relationVisitor.markVisited(entity);
-
         // Delegate to the generated relation loader
         relationLoader.loadRelations(entity, currentDepth);
     }

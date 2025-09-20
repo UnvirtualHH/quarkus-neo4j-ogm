@@ -7,7 +7,10 @@ import java.util.Map;
 
 import jakarta.inject.Inject;
 
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 
 import io.quarkiverse.quarkus.neo4j.ogm.it.model.Address;
 import io.quarkiverse.quarkus.neo4j.ogm.it.model.Person;
@@ -20,10 +23,9 @@ import io.smallrye.mutiny.helpers.test.UniAssertSubscriber;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class PersonReactiveRepositoryTest {
 
+    private static String createdId;
     @Inject
     PersonBaseReactiveRepository personRepository;
-
-    private static String createdId;
 
     @Test
     @Order(1)
@@ -108,6 +110,7 @@ public class PersonReactiveRepositoryTest {
     @Test
     @Order(6)
     void testQueryScalar() {
+
         Long count = personRepository.queryScalar(
                 "MATCH (n:Person) RETURN count(n) AS cnt",
                 Map.of(),
@@ -117,6 +120,7 @@ public class PersonReactiveRepositoryTest {
                 .getItem();
 
         assertTrue(count > 0);
+
     }
 
     @Test
@@ -218,6 +222,7 @@ public class PersonReactiveRepositoryTest {
 
         assertEquals(1, followers.size());
         assertEquals("Alice", followers.getFirst().getName());
+
     }
 
     @Test
