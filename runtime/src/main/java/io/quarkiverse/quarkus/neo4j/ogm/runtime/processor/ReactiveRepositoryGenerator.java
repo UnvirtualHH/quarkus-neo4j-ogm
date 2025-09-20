@@ -13,6 +13,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
 import com.palantir.javapoet.ClassName;
+import com.palantir.javapoet.CodeBlock;
 import com.palantir.javapoet.JavaFile;
 import com.palantir.javapoet.MethodSpec;
 import com.palantir.javapoet.ParameterizedTypeName;
@@ -62,7 +63,6 @@ public class ReactiveRepositoryGenerator {
             constructorBuilder.addParameter(ClassName.get(packageName, loaderClassName), "relationLoader");
         }
 
-        // NEW: use ReactiveRelationVisitor instead of RelationVisitor
         constructorBuilder.addParameter(
                 ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "ReactiveRelationVisitor"),
                 "relationVisitor");
@@ -109,19 +109,13 @@ public class ReactiveRepositoryGenerator {
 
                 // Extract $param names
                 Matcher matcher = PARAM_PATTERN.matcher(cypherQuery);
-                Set<String> paramNames = new LinkedHashSet<>();
+                List<String> paramNames = new ArrayList<>();
                 while (matcher.find()) {
                     paramNames.add(matcher.group(1));
                 }
 
-                // Guardrail
-                if (transactional && returnType == ReturnType.LIST) {
-                    processingEnv.getMessager().printMessage(
-                            javax.tools.Diagnostic.Kind.ERROR,
-                            "Cannot generate reactive method '" + methodName +
-                                    "': @Query(transactional=true) with returnType=LIST not supported.");
-                    continue;
-                }
+                boolean hasRet = hasReturn(cypherQuery);
+                boolean hasWrite = hasWriteClause(cypherQuery);
 
                 MethodSpec.Builder methodBuilder = MethodSpec.methodBuilder(methodName)
                         .addModifiers(Modifier.PUBLIC)
@@ -131,41 +125,64 @@ public class ReactiveRepositoryGenerator {
                     methodBuilder.addParameter(Object.class, paramName);
                 }
 
+                // build map
+                CodeBlock.Builder mapArgs = CodeBlock.builder();
+                boolean first = true;
+                for (String paramName : paramNames) {
+                    if (!first) {
+                        mapArgs.add(", ");
+                    }
+                    mapArgs.add("$S, $L", paramName, paramName);
+                    first = false;
+                }
+
+                // Repo call bestimmen
+                String repoCall;
+                if (!transactional) {
+                    if (hasWrite && !hasRet) {
+                        // write-only
+                        repoCall = "execute";
+                        methodBuilder.returns(ParameterizedTypeName.get(
+                                ClassName.get("io.smallrye.mutiny", "Uni"),
+                                ClassName.get(Void.class)));
+                        if (paramNames.isEmpty()) {
+                            methodBuilder.addStatement("return $L(query, $T.of())", repoCall, ClassName.get(Map.class));
+                        } else {
+                            methodBuilder.addStatement("return $L(query, $T.of(" + mapArgs.build() + "))",
+                                    repoCall, ClassName.get(Map.class));
+                        }
+                        generatedMethods.add(methodBuilder.build());
+                        continue;
+                    } else if (hasWrite && hasRet) {
+                        repoCall = (returnType == ReturnType.LIST) ? "executeQuery" : "executeReturning";
+                    } else {
+                        repoCall = (returnType == ReturnType.LIST) ? "query" : "querySingle";
+                    }
+                } else {
+                    repoCall = (returnType == ReturnType.LIST) ? "executeQuery" : "executeReturning";
+                }
+
                 if (returnType == ReturnType.LIST) {
                     methodBuilder
                             .returns(ParameterizedTypeName.get(
                                     ClassName.get("io.smallrye.mutiny", "Uni"),
                                     ParameterizedTypeName.get(ClassName.get(List.class),
                                             TypeName.get(entityType.asType()))));
-
                     if (paramNames.isEmpty()) {
-                        methodBuilder.addStatement("return queryList(query)");
+                        methodBuilder.addStatement("return $L(query, $T.of())", repoCall, ClassName.get(Map.class));
                     } else {
-                        StringBuilder mapConstruction = new StringBuilder();
-                        mapConstruction.append("$T<String, Object> params = new $T<>();");
-                        for (String paramName : paramNames) {
-                            mapConstruction.append("\nparams.put($S, $L);");
-                        }
-                        Object[] args = concatMapArgs(paramNames.toArray(new String[0]));
-                        methodBuilder.addStatement(mapConstruction.toString(), args);
-                        methodBuilder.addStatement("return queryList(query, params)");
+                        methodBuilder.addStatement("return $L(query, $T.of(" + mapArgs.build() + "))",
+                                repoCall, ClassName.get(Map.class));
                     }
                 } else {
                     methodBuilder.returns(ParameterizedTypeName.get(
                             ClassName.get("io.smallrye.mutiny", "Uni"),
                             TypeName.get(entityType.asType())));
-                    String repoCall = transactional ? "executeSingle" : "querySingle";
                     if (paramNames.isEmpty()) {
-                        methodBuilder.addStatement("return $L(query)", repoCall);
+                        methodBuilder.addStatement("return $L(query, $T.of())", repoCall, ClassName.get(Map.class));
                     } else {
-                        StringBuilder mapConstruction = new StringBuilder();
-                        mapConstruction.append("$T<String, Object> params = new $T<>();");
-                        for (String paramName : paramNames) {
-                            mapConstruction.append("\nparams.put($S, $L);");
-                        }
-                        Object[] args = concatMapArgs(paramNames.toArray(new String[0]));
-                        methodBuilder.addStatement(mapConstruction.toString(), args);
-                        methodBuilder.addStatement("return $L(query, params)", repoCall);
+                        methodBuilder.addStatement("return $L(query, $T.of(" + mapArgs.build() + "))",
+                                repoCall, ClassName.get(Map.class));
                     }
                 }
 
@@ -200,14 +217,12 @@ public class ReactiveRepositoryGenerator {
         }
     }
 
-    private static Object[] concatMapArgs(String[] paramNames) {
-        List<Object> args = new ArrayList<>();
-        args.add(ClassName.get("java.util", "Map"));
-        args.add(ClassName.get("java.util", "HashMap"));
-        for (String paramName : paramNames) {
-            args.add(paramName);
-            args.add(paramName);
-        }
-        return args.toArray();
+    private static boolean hasReturn(String cypher) {
+        return cypher.toUpperCase(Locale.ROOT).matches(".*\\bRETURN\\b.*");
+    }
+
+    private static boolean hasWriteClause(String cypher) {
+        return cypher.toUpperCase(Locale.ROOT)
+                .matches(".*\\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE)\\b.*");
     }
 }

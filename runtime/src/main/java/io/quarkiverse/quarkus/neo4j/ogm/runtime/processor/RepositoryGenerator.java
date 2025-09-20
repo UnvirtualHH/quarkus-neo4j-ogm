@@ -96,7 +96,7 @@ public class RepositoryGenerator {
                 String cypherQuery = q.cypher();
                 ReturnType returnType = q.returnType();
 
-                // Try to read boolean transactional() reflectively
+                // Reflective override (falls Annotation es explizit vorgibt)
                 boolean transactional = false;
                 try {
                     transactional = (boolean) Query.class.getMethod("transactional").invoke(q);
@@ -110,14 +110,9 @@ public class RepositoryGenerator {
                     paramNames.add(matcher.group(1));
                 }
 
-                // Guardrail
-                if (transactional && returnType == ReturnType.LIST) {
-                    processingEnv.getMessager().printMessage(
-                            javax.tools.Diagnostic.Kind.ERROR,
-                            "Cannot generate method '" + methodName + "': @Query(transactional=true) with returnType=LIST " +
-                                    "is not supported.");
-                    continue;
-                }
+                // Heuristik basierend auf Cypher
+                boolean hasRet = hasReturn(cypherQuery);
+                boolean hasWrite = hasWriteClause(cypherQuery);
 
                 MethodSpec.Builder methodBuilder = MethodSpec.methodBuilder(methodName)
                         .addModifiers(Modifier.PUBLIC)
@@ -138,20 +133,46 @@ public class RepositoryGenerator {
                     first = false;
                 }
 
+                // Repo call bestimmen
+                String repoCall;
+                if (!transactional) {
+                    if (hasWrite && !hasRet) {
+                        // write-only
+                        repoCall = "execute";
+                        methodBuilder.returns(TypeName.VOID);
+                        if (paramNames.isEmpty()) {
+                            methodBuilder.addStatement("$L(query, $T.of())", repoCall, ClassName.get(Map.class));
+                        } else {
+                            methodBuilder.addStatement("$L(query, $T.of(" + mapArgs.build() + "))",
+                                    repoCall, ClassName.get(Map.class));
+                        }
+                        generatedMethods.add(methodBuilder.build());
+                        continue;
+                    } else if (hasWrite && hasRet) {
+                        // mixed
+                        repoCall = (returnType == ReturnType.LIST) ? "executeQuery" : "executeReturning";
+                    } else {
+                        // pure read
+                        repoCall = (returnType == ReturnType.LIST) ? "query" : "querySingle";
+                    }
+                } else {
+                    // Annotation-Override
+                    repoCall = (returnType == ReturnType.LIST) ? "executeQuery" : "executeReturning";
+                }
+
                 if (returnType == ReturnType.LIST) {
                     methodBuilder
                             .returns(ParameterizedTypeName.get(ClassName.get(List.class), TypeName.get(entityType.asType())));
                     if (paramNames.isEmpty()) {
-                        methodBuilder.addStatement("return query(query)");
+                        methodBuilder.addStatement("return $L(query, $T.of())", repoCall, ClassName.get(Map.class));
                     } else {
-                        methodBuilder.addStatement("return query(query, $T.of(" + mapArgs.build() + "))",
-                                ClassName.get(Map.class));
+                        methodBuilder.addStatement("return $L(query, $T.of(" + mapArgs.build() + "))",
+                                repoCall, ClassName.get(Map.class));
                     }
                 } else {
                     methodBuilder.returns(TypeName.get(entityType.asType()));
-                    String repoCall = transactional ? "executeSingle" : "querySingle";
                     if (paramNames.isEmpty()) {
-                        methodBuilder.addStatement("return $L(query)", repoCall);
+                        methodBuilder.addStatement("return $L(query, $T.of())", repoCall, ClassName.get(Map.class));
                     } else {
                         methodBuilder.addStatement("return $L(query, $T.of(" + mapArgs.build() + "))",
                                 repoCall, ClassName.get(Map.class));
@@ -186,5 +207,14 @@ public class RepositoryGenerator {
             processingEnv.getMessager().printMessage(javax.tools.Diagnostic.Kind.ERROR,
                     "Failed to generate repository: " + e.getMessage());
         }
+    }
+
+    private static boolean hasReturn(String cypher) {
+        return cypher.toUpperCase(Locale.ROOT).matches(".*\\bRETURN\\b.*");
+    }
+
+    private static boolean hasWriteClause(String cypher) {
+        return cypher.toUpperCase(Locale.ROOT)
+                .matches(".*\\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE)\\b.*");
     }
 }

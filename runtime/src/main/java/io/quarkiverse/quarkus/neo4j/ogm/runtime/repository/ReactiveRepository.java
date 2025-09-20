@@ -97,20 +97,20 @@ public abstract class ReactiveRepository<T> {
 
     public Uni<T> findById(Object id) {
         resetVisitor();
-        return runReadQuerySingle("MATCH (n:" + label + " {id: $id}) RETURN n AS node", Map.of("id", id))
+        return runReadQuerySingle("MATCH (n:" + label + " {id: $id}) RETURN n", Map.of("id", id))
                 .flatMap(this::loadRelations);
     }
 
     public Multi<T> findAll() {
         resetVisitor();
-        return runReadQuery("MATCH (n:" + label + ") RETURN n AS node", Map.of())
+        return runReadQuery("MATCH (n:" + label + ") RETURN n", Map.of())
                 .onItem().transformToUniAndMerge(this::loadRelations);
     }
 
     public Multi<T> findAll(Pageable pageable, Sortable sortable) {
         resetVisitor();
         String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
-        String cypher = String.format("MATCH (n:%s) RETURN n AS node %s SKIP $skip LIMIT $limit", label, sortClause);
+        String cypher = String.format("MATCH (n:%s) RETURN n %s SKIP $skip LIMIT $limit", label, sortClause);
         Map<String, Object> params = Map.of(
                 "skip", pageable.page() * pageable.size(),
                 "limit", pageable.size());
@@ -121,7 +121,7 @@ public abstract class ReactiveRepository<T> {
     public Uni<Paged<T>> findAllPaged(Pageable pageable, Sortable sortable) {
         resetVisitor();
         String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
-        String cypher = String.format("MATCH (n:%s) RETURN n AS node %s SKIP $skip LIMIT $limit", label, sortClause);
+        String cypher = String.format("MATCH (n:%s) RETURN n %s SKIP $skip LIMIT $limit", label, sortClause);
         Map<String, Object> params = Map.of(
                 "skip", pageable.page() * pageable.size(),
                 "limit", pageable.size());
@@ -144,6 +144,19 @@ public abstract class ReactiveRepository<T> {
         return runWriteQueryVoid(cypher, parameters);
     }
 
+    public Uni<T> executeReturning(String cypher, Map<String, Object> parameters) {
+        resetVisitor();
+        return runWriteQuerySingle(cypher, parameters)
+                .flatMap(this::loadRelations);
+    }
+
+    public Multi<T> executeQuery(String cypher, Map<String, Object> parameters) {
+        resetVisitor();
+        return runQueryInternal(cypher, parameters, false)
+                .map(r -> entityMapper.map(r, resolveAlias(r)))
+                .onItem().transformToUniAndMerge(this::loadRelations);
+    }
+
     public Uni<Long> count() {
         return runScalarReadQuery("MATCH (n:" + label + ") RETURN count(n) AS count", Map.of(),
                 r -> r.get("count").asLong());
@@ -154,7 +167,7 @@ public abstract class ReactiveRepository<T> {
         EntityWithRelations data = entityMapper.toDb(entity);
         Object id = entityMapper.getNodeId(entity);
 
-        return runWriteQuerySingle("CREATE (n:" + label + " $props) RETURN n AS node",
+        return runWriteQuerySingle("CREATE (n:" + label + " $props) RETURN n",
                 Map.of("props", data.getProperties()))
                 .flatMap(saved -> persistRelationships(label, id, data.getRelationships()).replaceWith(saved));
     }
@@ -164,7 +177,7 @@ public abstract class ReactiveRepository<T> {
         Object id = entityMapper.getNodeId(entity);
         EntityWithRelations data = entityMapper.toDb(entity);
 
-        return runWriteQuerySingle("MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
+        return runWriteQuerySingle("MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n",
                 Map.of("id", id, "props", data.getProperties()))
                 .flatMap(updated -> persistRelationships(label, id, data.getRelationships()).replaceWith(updated));
     }
@@ -174,7 +187,7 @@ public abstract class ReactiveRepository<T> {
         Object id = entityMapper.getNodeId(entity);
         EntityWithRelations data = entityMapper.toDb(entity);
 
-        return runWriteQuerySingle("MERGE (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
+        return runWriteQuerySingle("MERGE (n:" + label + " {id: $id}) SET n += $props RETURN n",
                 Map.of("id", id, "props", data.getProperties()))
                 .flatMap(merged -> persistRelationships(label, id, data.getRelationships()).replaceWith(merged));
     }
@@ -226,7 +239,7 @@ public abstract class ReactiveRepository<T> {
             Sortable sortable) {
         resetVisitor();
         String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
-        String pagedCypher = baseCypher + " RETURN n AS node " + sortClause + " SKIP $skip LIMIT $limit";
+        String pagedCypher = baseCypher + " RETURN n " + sortClause + " SKIP $skip LIMIT $limit";
         Map<String, Object> allParams = new java.util.HashMap<>(params);
         allParams.put("skip", pageable.page() * pageable.size());
         allParams.put("limit", pageable.size());
@@ -245,6 +258,10 @@ public abstract class ReactiveRepository<T> {
                         tuple.getItem2(),
                         pageable.page(),
                         pageable.size()));
+    }
+
+    public Uni<T> querySingle(String cypher) {
+        return querySingle(cypher, Map.of());
     }
 
     public Uni<T> querySingle(String cypher, Map<String, Object> params) {
@@ -322,11 +339,12 @@ public abstract class ReactiveRepository<T> {
     }
 
     // ----------------------------------------------------------
-    // Internals: query execution (unchanged)
+    // Internals: query execution with alias resolution
     // ----------------------------------------------------------
 
     private Multi<T> runReadQuery(String cypher, Map<String, Object> params) {
-        return runQueryInternal(cypher, params, true).map(r -> entityMapper.map(r, "node"));
+        return runQueryInternal(cypher, params, true)
+                .map(r -> entityMapper.map(r, resolveAlias(r)));
     }
 
     private Uni<T> runReadQuerySingle(String cypher, Map<String, Object> params) {
@@ -336,7 +354,7 @@ public abstract class ReactiveRepository<T> {
     private Uni<T> runWriteQuerySingle(String cypher, Map<String, Object> params) {
         return runQueryInternal(cypher, params, false)
                 .collect().asList()
-                .map(records -> records.isEmpty() ? null : entityMapper.map(records.get(0), "node"));
+                .map(records -> records.isEmpty() ? null : entityMapper.map(records.get(0), resolveAlias(records.get(0))));
     }
 
     private Uni<Void> runWriteQueryVoid(String cypher, Map<String, Object> params) {
@@ -433,5 +451,12 @@ public abstract class ReactiveRepository<T> {
 
     public ReactiveRelationLoader<T> getRelationLoader() {
         return relationLoader;
+    }
+
+    protected String resolveAlias(Record rec) {
+        if (rec == null || rec.keys().isEmpty()) {
+            return "node";
+        }
+        return rec.keys().getFirst();
     }
 }

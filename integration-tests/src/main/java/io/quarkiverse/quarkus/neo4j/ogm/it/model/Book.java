@@ -10,7 +10,9 @@ import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.GenerateRepository.Repos
 @NodeEntity
 @GenerateRepository(RepositoryType.BOTH)
 @Queries({
-        @Query(name = "findByTitle", cypher = "MATCH (b:Book {title: $title}) RETURN b AS node")
+        @Query(name = "findByTitle", cypher = "MATCH (b:Book {title: $title}) RETURN b"),
+        @Query(name = "deleteAll", cypher = "MATCH (n:Book) DETACH DELETE n"),
+        @Query(name = "touchAndReturn", cypher = "MATCH (b:Book {title: $title}) SET b.active = true RETURN b AS blah")
 })
 public class Book {
 
@@ -21,6 +23,9 @@ public class Book {
 
     @Relationship(type = "WROTE", direction = Direction.INCOMING, mode = RelationshipMode.FETCH_AND_PERSIST)
     private Author author;
+
+    @Property(name = "active")
+    private boolean active;
 
     public UUID getId() {
         return id;
@@ -44,5 +49,13 @@ public class Book {
 
     public void setAuthor(Author author) {
         this.author = author;
+    }
+
+    public boolean isActive() {
+        return active;
+    }
+
+    public void setActive(boolean active) {
+        this.active = active;
     }
 }

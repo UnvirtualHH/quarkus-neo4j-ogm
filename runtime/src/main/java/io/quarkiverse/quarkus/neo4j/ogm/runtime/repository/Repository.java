@@ -103,12 +103,13 @@ public abstract class Repository<T> {
             return inReadTx(tx -> {
                 var result = tx.run("MATCH (n:" + label + " {id: $id}) RETURN n AS node",
                         Values.parameters("id", id));
-                T entity = entityMapper.map(result.single(), "node");
+                Record rec = result.single();
+                String alias = resolveAlias(rec);
+                T entity = entityMapper.map(rec, alias);
                 loadRelations(entity, 0);
                 return entity;
             });
         } finally {
-            // Clean up ThreadLocal context after operation
             if (relationVisitor != null) {
                 relationVisitor.reset();
             }
@@ -119,7 +120,10 @@ public abstract class Repository<T> {
         try {
             return inReadTx(tx -> {
                 var result = tx.run("MATCH (n:" + label + ") RETURN n AS node");
-                List<T> entities = result.list(r -> entityMapper.map(r, "node"));
+                List<T> entities = result.list(rec -> {
+                    String alias = resolveAlias(rec);
+                    return entityMapper.map(rec, alias);
+                });
                 entities.forEach(entity -> loadRelations(entity, 0));
                 return entities;
             });
@@ -138,7 +142,10 @@ public abstract class Repository<T> {
                     "skip", pageable.page() * pageable.size(),
                     "limit", pageable.size());
             var result = tx.run(cypher, params);
-            List<T> entities = result.list(r -> entityMapper.map(r, "node"));
+            List<T> entities = result.list(rec -> {
+                String alias = resolveAlias(rec);
+                return entityMapper.map(rec, alias);
+            });
             entities.forEach(entity -> loadRelations(entity, 0));
             return entities;
         });
@@ -153,7 +160,10 @@ public abstract class Repository<T> {
 
         List<T> content = inReadTx(tx -> {
             var result = tx.run(cypher, params);
-            List<T> entities = result.list(r -> entityMapper.map(r, "node"));
+            List<T> entities = result.list(rec -> {
+                String alias = resolveAlias(rec);
+                return entityMapper.map(rec, alias);
+            });
             entities.forEach(entity -> loadRelations(entity, 0));
             return entities;
         });
@@ -176,7 +186,9 @@ public abstract class Repository<T> {
 
             var result = tx.run("CREATE (n:" + label + " $props) RETURN n AS node",
                     Values.parameters("props", data.getProperties()));
-            T saved = entityMapper.map(result.single(), "node");
+            Record rec = result.single();
+            String alias = resolveAlias(rec);
+            T saved = entityMapper.map(rec, alias);
 
             persistRelationships(tx, label, id, data.getRelationships());
             return saved;
@@ -193,7 +205,9 @@ public abstract class Repository<T> {
 
             var result = tx.run("MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
                     Values.parameters("id", id, "props", data.getProperties()));
-            T updated = entityMapper.map(result.single(), "node");
+            Record rec = result.single();
+            String alias = resolveAlias(rec);
+            T updated = entityMapper.map(rec, alias);
 
             persistRelationships(tx, label, id, data.getRelationships());
             return updated;
@@ -210,7 +224,9 @@ public abstract class Repository<T> {
 
             var result = tx.run("MERGE (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
                     Values.parameters("id", id, "props", data.getProperties()));
-            T merged = entityMapper.map(result.single(), "node");
+            Record rec = result.single();
+            String alias = resolveAlias(rec);
+            T merged = entityMapper.map(rec, alias);
 
             persistRelationships(tx, label, id, data.getRelationships());
             return merged;
@@ -255,7 +271,10 @@ public abstract class Repository<T> {
     public List<T> query(String cypher, Map<String, Object> parameters) {
         return inReadTx(tx -> {
             List<T> results = tx.run(cypher, Values.value(parameters))
-                    .list(r -> entityMapper.map(r, "node"));
+                    .list(rec -> {
+                        String alias = resolveAlias(rec);
+                        return entityMapper.map(rec, alias);
+                    });
             results.forEach(entity -> loadRelations(entity, 0));
             return results;
         });
@@ -269,7 +288,10 @@ public abstract class Repository<T> {
             params.put("skip", pageable.page() * pageable.size());
             params.put("limit", pageable.size());
             var result = tx.run(pagedCypher, params);
-            List<T> entities = result.list(r -> entityMapper.map(r, "node"));
+            List<T> entities = result.list(rec -> {
+                String alias = resolveAlias(rec);
+                return entityMapper.map(rec, alias);
+            });
             entities.forEach(entity -> loadRelations(entity, 0));
             return entities;
         });
@@ -284,7 +306,10 @@ public abstract class Repository<T> {
 
         List<T> content = inReadTx(tx -> {
             var result = tx.run(pagedCypher, allParams);
-            List<T> entities = result.list(r -> entityMapper.map(r, "node"));
+            List<T> entities = result.list(rec -> {
+                String alias = resolveAlias(rec);
+                return entityMapper.map(rec, alias);
+            });
             entities.forEach(entity -> loadRelations(entity, 0));
             return entities;
         });
@@ -308,7 +333,9 @@ public abstract class Repository<T> {
             if (!result.hasNext()) {
                 return null;
             }
-            T entity = entityMapper.map(result.single(), "node");
+            Record rec = result.single();
+            String alias = resolveAlias(rec);
+            T entity = entityMapper.map(rec, alias);
             loadRelations(entity, 0);
             return entity;
         });
@@ -316,6 +343,32 @@ public abstract class Repository<T> {
 
     public void execute(String cypher, Map<String, Object> parameters) {
         inWriteTxVoid(tx -> tx.run(cypher, Values.value(parameters)).consume());
+    }
+
+    public T executeReturning(String cypher, Map<String, Object> parameters) {
+        return inWriteTx(tx -> {
+            var result = tx.run(cypher, Values.value(parameters));
+            if (!result.hasNext()) {
+                return null;
+            }
+            Record rec = result.single();
+            String alias = resolveAlias(rec);
+            T entity = entityMapper.map(rec, alias);
+            loadRelations(entity, 0);
+            return entity;
+        });
+    }
+
+    public List<T> executeQuery(String cypher, Map<String, Object> parameters) {
+        return inWriteTx(tx -> {
+            var result = tx.run(cypher, Values.value(parameters));
+            List<T> entities = result.list(rec -> {
+                String alias = resolveAlias(rec);
+                return entityMapper.map(rec, alias);
+            });
+            entities.forEach(entity -> loadRelations(entity, 0));
+            return entities;
+        });
     }
 
     public <R> R queryScalar(String cypher, Function<Record, R> mapper) {
@@ -328,38 +381,28 @@ public abstract class Repository<T> {
 
     // ========================= Relation Loading with CDI Visitor =========================
 
-    /**
-     * Load relations using the CDI-injected visitor
-     */
     protected void loadRelations(T entity, int currentDepth) {
         if (entity == null || relationLoader == null || relationVisitor == null) {
             return;
         }
 
-        // Check if we should visit this entity (handles circular references)
         if (!relationVisitor.shouldVisit(entity, currentDepth)) {
             return;
         }
 
-        // Delegate to the generated relation loader
         relationLoader.loadRelations(entity, currentDepth);
     }
 
-    /**
-     * Load relations for any entity type using the registry
-     */
     @SuppressWarnings("unchecked")
     protected void loadRelationsForAnyEntity(Object entity, int currentDepth) {
         if (entity == null) {
             return;
         }
 
-        // Check if we should visit this entity
         if (!relationVisitor.shouldVisit(entity, currentDepth)) {
             return;
         }
 
-        // Mark entity as visited
         relationVisitor.markVisited(entity);
 
         Class<?> entityClass = entity.getClass();
@@ -413,17 +456,20 @@ public abstract class Repository<T> {
 
     // ========================= Monitoring and Debugging =========================
 
-    /**
-     * Get visitor statistics for the current request
-     */
     public RelationVisitor.VisitorStats getVisitorStats() {
         return relationVisitor.getStats();
     }
 
-    /**
-     * Get current traversal path (useful for debugging circular references)
-     */
     public List<RelationVisitor.TraversalStep> getTraversalPath() {
         return relationVisitor.getTraversalPath();
+    }
+
+    // ========================= Alias Resolution Helper =========================
+
+    protected String resolveAlias(Record rec) {
+        if (rec == null || rec.keys().isEmpty()) {
+            return "node";
+        }
+        return rec.keys().getFirst();
     }
 }
