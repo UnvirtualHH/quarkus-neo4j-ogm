@@ -2,7 +2,6 @@ package io.quarkiverse.quarkus.neo4j.ogm.runtime.processor;
 
 import java.io.IOException;
 import java.util.*;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import javax.annotation.processing.ProcessingEnvironment;
@@ -13,16 +12,11 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
 import com.palantir.javapoet.ClassName;
-import com.palantir.javapoet.CodeBlock;
 import com.palantir.javapoet.JavaFile;
 import com.palantir.javapoet.MethodSpec;
 import com.palantir.javapoet.ParameterizedTypeName;
 import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
-
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.ReturnType;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.Queries;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.Query;
 
 public class ReactiveRepositoryGenerator {
 
@@ -91,108 +85,8 @@ public class ReactiveRepositoryGenerator {
                         ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository", "ReactiveRepository"),
                         TypeName.get(entityType.asType())));
 
-        // generate custom query methods
-        List<MethodSpec> generatedMethods = new ArrayList<>();
-
-        Queries queriesAnnotation = entityType.getAnnotation(Queries.class);
-        if (queriesAnnotation != null) {
-            for (Query q : queriesAnnotation.value()) {
-                String methodName = q.name();
-                String cypherQuery = q.cypher();
-                ReturnType returnType = q.returnType();
-
-                boolean transactional = false;
-                try {
-                    transactional = (boolean) Query.class.getMethod("transactional").invoke(q);
-                } catch (Exception ignored) {
-                }
-
-                // Extract $param names
-                Matcher matcher = PARAM_PATTERN.matcher(cypherQuery);
-                List<String> paramNames = new ArrayList<>();
-                while (matcher.find()) {
-                    paramNames.add(matcher.group(1));
-                }
-
-                boolean hasRet = hasReturn(cypherQuery);
-                boolean hasWrite = hasWriteClause(cypherQuery);
-
-                MethodSpec.Builder methodBuilder = MethodSpec.methodBuilder(methodName)
-                        .addModifiers(Modifier.PUBLIC)
-                        .addStatement("String query = $S", cypherQuery);
-
-                for (String paramName : paramNames) {
-                    methodBuilder.addParameter(Object.class, paramName);
-                }
-
-                // build map
-                CodeBlock.Builder mapArgs = CodeBlock.builder();
-                boolean first = true;
-                for (String paramName : paramNames) {
-                    if (!first) {
-                        mapArgs.add(", ");
-                    }
-                    mapArgs.add("$S, $L", paramName, paramName);
-                    first = false;
-                }
-
-                // Repo call bestimmen
-                String repoCall;
-                if (!transactional) {
-                    if (hasWrite && !hasRet) {
-                        // write-only
-                        repoCall = "execute";
-                        methodBuilder.returns(ParameterizedTypeName.get(
-                                ClassName.get("io.smallrye.mutiny", "Uni"),
-                                ClassName.get(Void.class)));
-                        if (paramNames.isEmpty()) {
-                            methodBuilder.addStatement("return $L(query, $T.of())", repoCall, ClassName.get(Map.class));
-                        } else {
-                            methodBuilder.addStatement("return $L(query, $T.of(" + mapArgs.build() + "))",
-                                    repoCall, ClassName.get(Map.class));
-                        }
-                        generatedMethods.add(methodBuilder.build());
-                        continue;
-                    } else if (hasWrite && hasRet) {
-                        repoCall = (returnType == ReturnType.LIST) ? "executeQuery" : "executeReturning";
-                    } else {
-                        repoCall = (returnType == ReturnType.LIST) ? "query" : "querySingle";
-                    }
-                } else {
-                    repoCall = (returnType == ReturnType.LIST) ? "executeQuery" : "executeReturning";
-                }
-
-                if (returnType == ReturnType.LIST) {
-                    methodBuilder
-                            .returns(ParameterizedTypeName.get(
-                                    ClassName.get("io.smallrye.mutiny", "Uni"),
-                                    ParameterizedTypeName.get(ClassName.get(List.class),
-                                            TypeName.get(entityType.asType()))));
-                    if (paramNames.isEmpty()) {
-                        methodBuilder.addStatement("return $L(query, $T.of())", repoCall, ClassName.get(Map.class));
-                    } else {
-                        methodBuilder.addStatement("return $L(query, $T.of(" + mapArgs.build() + "))",
-                                repoCall, ClassName.get(Map.class));
-                    }
-                } else {
-                    methodBuilder.returns(ParameterizedTypeName.get(
-                            ClassName.get("io.smallrye.mutiny", "Uni"),
-                            TypeName.get(entityType.asType())));
-                    if (paramNames.isEmpty()) {
-                        methodBuilder.addStatement("return $L(query, $T.of())", repoCall, ClassName.get(Map.class));
-                    } else {
-                        methodBuilder.addStatement("return $L(query, $T.of(" + mapArgs.build() + "))",
-                                repoCall, ClassName.get(Map.class));
-                    }
-                }
-
-                generatedMethods.add(methodBuilder.build());
-            }
-        }
-
-        for (MethodSpec method : generatedMethods) {
-            repositoryClassBuilder.addMethod(method);
-        }
+        List<MethodSpec> generatedMethods = QueryMethodFactory.buildQueryMethods(entityType, true, processingEnv);
+        generatedMethods.forEach(repositoryClassBuilder::addMethod);
 
         // getEntityType
         MethodSpec getEntityTypeMethod = MethodSpec.methodBuilder("getEntityType")
