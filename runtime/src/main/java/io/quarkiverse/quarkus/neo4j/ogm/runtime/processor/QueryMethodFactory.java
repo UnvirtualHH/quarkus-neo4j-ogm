@@ -95,11 +95,14 @@ final class QueryMethodFactory {
             }
         }
 
+        ClassName mapClass = ClassName.get("java.util", "Map");
+        ClassName hashMapClass = ClassName.get("java.util", "HashMap");
+
         if (paramNames.isEmpty()) {
-            mb.addStatement("return $L(query, $T.of())", repoCall, ClassName.get(Map.class));
+            mb.addStatement("return $L(query, $T.of())", repoCall, mapClass);
         } else {
-            mb.addStatement("return $L(query, new $T<>(Map.of(" + mapArgs + ")))",
-                    repoCall, ClassName.get("java.util", "HashMap"));
+            mb.addStatement("return $L(query, new $T<>($T.of(" + mapArgs + ")))",
+                    repoCall, hashMapClass, mapClass);
         }
 
         return mb.build();
@@ -113,21 +116,24 @@ final class QueryMethodFactory {
             List<String> paramNames,
             CodeBlock mapArgs) {
 
+        ClassName mapClass = ClassName.get("java.util", "Map");
+        ClassName hashMapClass = ClassName.get("java.util", "HashMap");
+
         if (reactive) {
             mb.returns(ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"), ClassName.get(Void.class)));
             if (paramNames.isEmpty()) {
-                mb.addStatement("return $L(query, $T.of())", repoCall, ClassName.get(Map.class));
+                mb.addStatement("return $L(query, $T.of())", repoCall, mapClass);
             } else {
-                mb.addStatement("return $L(query, new $T<>(Map.of(" + mapArgs + ")))",
-                        repoCall, ClassName.get("java.util", "HashMap"));
+                mb.addStatement("return $L(query, new $T<>($T.of(" + mapArgs + ")))",
+                        repoCall, hashMapClass, mapClass);
             }
         } else {
             mb.returns(TypeName.VOID);
             if (paramNames.isEmpty()) {
-                mb.addStatement("$L(query, $T.of())", repoCall, ClassName.get(Map.class));
+                mb.addStatement("$L(query, $T.of())", repoCall, mapClass);
             } else {
                 mb.addStatement("$L(query, new $T<>(Map.of(" + mapArgs + ")))",
-                        repoCall, ClassName.get("java.util", "HashMap"));
+                        repoCall, hashMapClass);
             }
         }
         return mb.build();
