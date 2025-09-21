@@ -170,9 +170,6 @@ final class QueryMethodFactory {
                 return TypeName.get(((ExecutableElement) e).getReturnType());
             }
         }
-        // Fallback
-        env.getMessager().printMessage(javax.tools.Diagnostic.Kind.WARNING,
-                "Parameter '" + paramName + "' konnte nicht aufgelöst werden, benutze Object.");
         return TypeName.get(Object.class);
     }
 
