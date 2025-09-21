@@ -18,6 +18,11 @@ public class UUIDTypeHandler implements TypeHandler {
     }
 
     @Override
+    public boolean supportsType(String fqcn) {
+        return "java.util.UUID".equals(fqcn);
+    }
+
+    @Override
     public CodeBlock generateSetterCode(VariableElement field, String targetVar, String valueSource) {
         return CodeBlock.of(
                 "$L.$L($T.fromString($L.get($S).asString()));\n",
@@ -55,5 +60,10 @@ public class UUIDTypeHandler implements TypeHandler {
                 .endControlFlow();
 
         return code.build();
+    }
+
+    @Override
+    public CodeBlock generateParameterConversion(String sourceVar) {
+        return CodeBlock.of("$L.toString()", sourceVar);
     }
 }

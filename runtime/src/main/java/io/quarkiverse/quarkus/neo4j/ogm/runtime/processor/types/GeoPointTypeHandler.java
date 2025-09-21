@@ -43,4 +43,5 @@ public class GeoPointTypeHandler implements TypeHandler {
                 .endControlFlow()
                 .build();
     }
+
 }

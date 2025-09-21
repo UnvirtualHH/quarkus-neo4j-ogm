@@ -12,7 +12,6 @@ public class ListTypeHandler implements TypeHandler {
 
     @Override
     public boolean supports(VariableElement field) {
-        // Warnung: das prüft nur auf "java.util.List", keine Generics
         return field.asType().toString().equals("java.util.List");
     }
 

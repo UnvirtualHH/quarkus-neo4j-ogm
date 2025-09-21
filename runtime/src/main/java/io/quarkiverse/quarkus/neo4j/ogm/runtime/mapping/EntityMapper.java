@@ -27,4 +27,8 @@ public interface EntityMapper<T> {
     Object getNodeId(T entity);
 
     void setRelation(T entity, String relationType, Object relatedEntity);
+
+    default Object convertValue(Object value) {
+        return value;
+    }
 }

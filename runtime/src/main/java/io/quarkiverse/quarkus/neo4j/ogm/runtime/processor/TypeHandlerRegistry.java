@@ -32,4 +32,8 @@ public class TypeHandlerRegistry {
     public static Optional<TypeHandler> findHandler(VariableElement field) {
         return handlers.stream().filter(h -> h.supports(field)).findFirst();
     }
+
+    public static Optional<TypeHandler> findHandler(String fqcn) {
+        return handlers.stream().filter(h -> h.supportsType(fqcn)).findFirst();
+    }
 }

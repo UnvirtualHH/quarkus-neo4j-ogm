@@ -16,6 +16,11 @@ public class InstantTypeHandler implements TypeHandler {
     }
 
     @Override
+    public boolean supportsType(String fqcn) {
+        return "java.time.Instant".equals(fqcn);
+    }
+
+    @Override
     public CodeBlock generateSetterCode(VariableElement field, String targetVar, String valueSource) {
         return CodeBlock.of(
                 "if ($L.get($S) != null && !$L.get($S).isNull()) { " +
@@ -41,5 +46,10 @@ public class InstantTypeHandler implements TypeHandler {
                 mapVar, getPropertyName(field),
                 entityVar, resolveGetterName(field),
                 mapVar, getPropertyName(field));
+    }
+
+    @Override
+    public CodeBlock generateParameterConversion(String sourceVar) {
+        return CodeBlock.of("java.time.ZonedDateTime.ofInstant($L, java.time.ZoneOffset.UTC)", sourceVar);
     }
 }

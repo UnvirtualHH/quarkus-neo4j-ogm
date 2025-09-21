@@ -17,4 +17,12 @@ public @interface Query {
     ReturnType returnType() default ReturnType.SINGLE;
 
     boolean transactional() default false;
+
+    @interface Param {
+        String name();
+
+        Class<?> type();
+    }
+
+    Param[] paramTypes() default {};
 }
