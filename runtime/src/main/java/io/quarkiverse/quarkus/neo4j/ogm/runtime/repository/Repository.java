@@ -416,34 +416,49 @@ public abstract class Repository<T> {
     // ========================= Relationship Persistence =========================
 
     private void persistRelationships(Transaction tx, String label, Object fromId, List<RelationshipData> relationships) {
-        if (relationships == null || relationships.isEmpty())
+        if (relationships == null || relationships.isEmpty()) {
             return;
+        }
 
         for (RelationshipData rel : relationships) {
             Object toId = rel.getTargetId();
 
-            if (toId == null && rel.getTargetEntity() != null) {
-                Object target = rel.getTargetEntity();
-                Class<?> targetType = target.getClass();
+            if (rel.getTarget() != null) {
+                EntityWithRelations target = rel.getTarget();
 
-                Repository<Object> targetRepo = (Repository<Object>) registry.getRepository(targetType);
-                Object id = targetRepo.getEntityMapper().getNodeId(target);
+                @SuppressWarnings("unchecked")
+                Repository<Object> targetRepo = (Repository<Object>) registry.getRepository(target.getEntityType());
+
+                Object id = rel.getTargetId();
                 if (id == null) {
                     Object merged = targetRepo.create(target);
                     id = targetRepo.getEntityMapper().getNodeId(merged);
                 }
+
                 rel.setTargetId(id);
                 toId = id;
+
+                persistRelationships(tx,
+                        target.getEntityType().getSimpleName(), // Label
+                        id,
+                        target.getRelationships());
             }
 
-            if (toId == null)
+            if (toId == null) {
                 continue;
+            }
 
             String query = switch (rel.getDirection()) {
-                case OUTGOING -> "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)-[r:" + rel.getType() + "]->(b)";
-                case INCOMING -> "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)<-[r:" + rel.getType() + "]-(b)";
-                case BOTH -> throw new UnsupportedOperationException("Direction.BOTH is not supported yet");
-                case UNDIRECTED -> throw new UnsupportedOperationException("Direction.UNDIRECTED is not supported yet");
+                case OUTGOING ->
+                    "MATCH (a:" + label + " {id: $from}), (b {id: $to}) " +
+                            "MERGE (a)-[r:" + rel.getType() + "]->(b)";
+                case INCOMING ->
+                    "MATCH (a:" + label + " {id: $from}), (b {id: $to}) " +
+                            "MERGE (a)<-[r:" + rel.getType() + "]-(b)";
+                case BOTH ->
+                    throw new UnsupportedOperationException("Direction.BOTH is not supported yet");
+                case UNDIRECTED ->
+                    throw new UnsupportedOperationException("Direction.UNDIRECTED is not supported yet");
             };
 
             tx.run(query, Values.parameters("from", fromId, "to", toId));

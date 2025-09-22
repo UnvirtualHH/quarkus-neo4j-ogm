@@ -82,7 +82,9 @@ public class EntityMapperProcessor extends AbstractProcessor {
             }
 
             // Generate RelationLoader for the entity if it has relationships
-            String loaderClassName = entityName + "RelationLoader";
+            String loaderClassName = repoType == GenerateRepository.RepositoryType.REACTIVE
+                    ? entityName + "ReactiveRelationLoader"
+                    : entityName + "RelationLoader";
             String loaderFQN = packageName + "." + loaderClassName;
             if (generatedClasses.add(loaderFQN)) {
                 if (repoType == GenerateRepository.RepositoryType.BOTH) {

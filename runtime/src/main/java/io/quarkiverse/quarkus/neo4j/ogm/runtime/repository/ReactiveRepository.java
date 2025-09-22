@@ -408,13 +408,14 @@ public abstract class ReactiveRepository<T> {
 
         return Multi.createFrom().iterable(relationships)
                 .onItem().transformToUniAndMerge(rel -> {
-                    Object toId = rel.getTargetId();
-                    if (toId == null && rel.getTargetEntity() != null) {
-                        Object target = rel.getTargetEntity();
-                        Class<?> targetType = target.getClass();
+                    if (rel.getTarget() != null) {
+                        EntityWithRelations target = rel.getTarget();
+
+                        @SuppressWarnings("unchecked")
                         ReactiveRepository<Object> targetRepo = (ReactiveRepository<Object>) reactiveRegistry
-                                .getReactiveRepository(targetType);
-                        Object id = targetRepo.getEntityMapper().getNodeId(target);
+                                .getReactiveRepository(target.getEntityType());
+
+                        Object id = rel.getTargetId();
                         Uni<Object> idUni = id == null
                                 ? targetRepo.create(target).map(saved -> targetRepo.getEntityMapper().getNodeId(saved))
                                 : Uni.createFrom().item(id);

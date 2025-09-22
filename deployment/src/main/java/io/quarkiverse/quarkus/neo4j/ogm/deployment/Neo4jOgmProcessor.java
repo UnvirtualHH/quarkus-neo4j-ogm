@@ -1,5 +1,6 @@
 package io.quarkiverse.quarkus.neo4j.ogm.deployment;
 
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityMapperRegistry;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.ReactiveRelationVisitor;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.ReactiveRepositoryRegistry;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.RelationVisitor;
@@ -22,6 +23,7 @@ class Neo4jOgmProcessor {
     void registerBeans(BuildProducer<AdditionalBeanBuildItem> additionalBeans) {
         additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(RelationVisitor.class));
         additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(ReactiveRelationVisitor.class));
+        additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(EntityMapperRegistry.class));
         additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(RepositoryRegistry.class));
         additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(ReactiveRepositoryRegistry.class));
     }

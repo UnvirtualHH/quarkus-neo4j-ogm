@@ -32,10 +32,6 @@ public class ImperativeRelationLoaderGenerator extends AbstractRelationLoaderGen
                 .anyMatch(f -> f.getAnnotation(Relationship.class) != null
                         && shouldFetchRelationship(f.getAnnotation(Relationship.class)));
 
-        if (!hasRelationships) {
-            return;
-        }
-
         Types types = processingEnv.getTypeUtils();
         TypeMirror listType = processingEnv.getElementUtils()
                 .getTypeElement("java.util.List").asType();

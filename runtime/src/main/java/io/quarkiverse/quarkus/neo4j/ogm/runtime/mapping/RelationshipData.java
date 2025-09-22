@@ -3,15 +3,23 @@ package io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.enums.Direction;
 
 public class RelationshipData {
+
     private final String type;
     private final Direction direction;
     private Object targetId;
-    private final Object targetEntity;
+    private final EntityWithRelations target;
 
-    public RelationshipData(String type, Direction direction, Object targetEntity) {
+    public RelationshipData(String type, Direction direction, EntityWithRelations target) {
         this.type = type;
         this.direction = direction;
-        this.targetEntity = targetEntity;
+        this.target = target;
+    }
+
+    public RelationshipData(String type, Direction direction, Object targetId, EntityWithRelations target) {
+        this.type = type;
+        this.direction = direction;
+        this.targetId = targetId;
+        this.target = target;
     }
 
     public String getType() {
@@ -22,8 +30,8 @@ public class RelationshipData {
         return direction;
     }
 
-    public Object getTargetEntity() {
-        return targetEntity;
+    public EntityWithRelations getTarget() {
+        return target;
     }
 
     public Object getTargetId() {
