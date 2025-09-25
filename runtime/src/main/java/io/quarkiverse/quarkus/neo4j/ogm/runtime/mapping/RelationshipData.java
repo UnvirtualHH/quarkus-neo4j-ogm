@@ -41,4 +41,5 @@ public class RelationshipData {
     public void setTargetId(Object targetId) {
         this.targetId = targetId;
     }
+
 }

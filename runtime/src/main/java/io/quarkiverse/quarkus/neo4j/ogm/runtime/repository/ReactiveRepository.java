@@ -17,7 +17,6 @@ import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Paged;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Sortable;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
-import io.smallrye.mutiny.unchecked.Unchecked;
 
 /**
  * Reactive repository base class for Neo4j OGM.
@@ -170,6 +169,18 @@ public abstract class ReactiveRepository<T> {
         return runWriteQuerySingle("CREATE (n:" + label + " $props) RETURN n",
                 Map.of("props", data.getProperties()))
                 .flatMap(saved -> persistRelationships(label, id, data.getRelationships()).replaceWith(saved));
+    }
+
+    private Uni<T> createInternal(EntityWithRelations entity) {
+        resetVisitor();
+
+        return runWriteQuerySingle(
+                "MERGE (n:" + label + " {id: $props.id}) " +
+                        "SET n += $props " +
+                        "RETURN n",
+                Map.of("props", entity.getProperties()))
+                .flatMap(saved -> persistRelationships(label, entityMapper.getNodeId(saved), entity.getRelationships())
+                        .replaceWith(saved));
     }
 
     public Uni<T> update(T entity) {
@@ -415,21 +426,23 @@ public abstract class ReactiveRepository<T> {
                         ReactiveRepository<Object> targetRepo = (ReactiveRepository<Object>) reactiveRegistry
                                 .getReactiveRepository(target.getEntityType());
 
-                        Object id = rel.getTargetId();
-                        Uni<Object> idUni = id == null
-                                ? targetRepo.create(target).map(saved -> targetRepo.getEntityMapper().getNodeId(saved))
-                                : Uni.createFrom().item(id);
-
-                        return idUni.invoke(rel::setTargetId).replaceWithVoid();
+                        return targetRepo.createInternal(target)
+                                .map(saved -> targetRepo.getEntityMapper().getNodeId(saved))
+                                .invoke(rel::setTargetId)
+                                .call(id -> persistRelationships(
+                                        target.getEntityType().getSimpleName(),
+                                        id,
+                                        target.getRelationships()));
                     }
                     return Uni.createFrom().voidItem();
                 })
                 .collect().asList()
-                .flatMap(list -> Multi.createFrom().iterable(relationships)
-                        .onItem().transformToUniAndMerge(Unchecked.function(rel -> {
+                .flatMap(ignore -> Multi.createFrom().iterable(relationships)
+                        .onItem().transformToUniAndMerge(rel -> {
                             Object toId = rel.getTargetId();
-                            if (toId == null)
+                            if (toId == null) {
                                 return Uni.createFrom().voidItem();
+                            }
                             String query = switch (rel.getDirection()) {
                                 case OUTGOING ->
                                     "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)-[r:" + rel.getType()
@@ -441,7 +454,7 @@ public abstract class ReactiveRepository<T> {
                                     throw new UnsupportedOperationException("Unsupported direction: " + rel.getDirection());
                             };
                             return runWriteQueryVoid(query, Map.of("from", fromId, "to", toId));
-                        }))
+                        })
                         .collect().asList()
                         .replaceWithVoid());
     }

@@ -137,14 +137,14 @@ public class MapperGenerator {
                     builder.beginControlFlow("if (entity.$L() != null)", getterName)
                             .beginControlFlow("for (var related : entity.$L())", getterName)
                             .addStatement(
-                                    "$T targetEntity = registry.get($T.class).toDb(related)",
+                                    "$T relatedWithRels = registry.get($T.class).toDb(related)",
                                     ClassName.get(EntityWithRelations.class),
                                     ClassName.bestGuess(targetTypeName))
                             .addStatement(
                                     "Object targetId = registry.get($T.class).getNodeId(related)",
                                     ClassName.bestGuess(targetTypeName))
                             .addStatement(
-                                    "relationships.add(new $T($S, $T.$L, targetId.toString(), targetEntity))",
+                                    "relationships.add(new $T($S, $T.$L, targetId, relatedWithRels))",
                                     ClassName.get(RelationshipData.class),
                                     relType,
                                     ClassName.get(Direction.class),
@@ -154,7 +154,7 @@ public class MapperGenerator {
                 } else {
                     builder.beginControlFlow("if (entity.$L() != null)", getterName)
                             .addStatement(
-                                    "$T targetEntity = registry.get($T.class).toDb(entity.$L())",
+                                    "$T relatedWithRels = registry.get($T.class).toDb(entity.$L())",
                                     ClassName.get(EntityWithRelations.class),
                                     ClassName.bestGuess(targetTypeName),
                                     getterName)
@@ -163,7 +163,7 @@ public class MapperGenerator {
                                     ClassName.bestGuess(targetTypeName),
                                     getterName)
                             .addStatement(
-                                    "relationships.add(new $T($S, $T.$L, targetId.toString(), targetEntity))",
+                                    "relationships.add(new $T($S, $T.$L, targetId, relatedWithRels))",
                                     ClassName.get(RelationshipData.class),
                                     relType,
                                     ClassName.get(Direction.class),
