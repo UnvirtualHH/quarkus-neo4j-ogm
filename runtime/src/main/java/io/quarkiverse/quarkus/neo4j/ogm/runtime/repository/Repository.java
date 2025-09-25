@@ -7,10 +7,7 @@ import java.util.function.Function;
 import org.neo4j.driver.*;
 import org.neo4j.driver.Record;
 
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityMapper;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.EntityWithRelations;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationLoader;
-import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.RelationshipData;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.*;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Pageable;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Paged;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.repository.util.Sortable;
@@ -197,13 +194,29 @@ public abstract class Repository<T> {
 
     private T createInternal(EntityWithRelations entity) {
         return inWriteTx(tx -> {
-            var result = tx.run("MERGE (n:" + label + " $props) RETURN n AS node",
-                    Values.parameters("props", entity.getProperties()));
+            Map<String, Object> props = entity.getProperties();
+
+            String idProp = entityMapper.getNodeIdPropertyName();
+            Object id = props.get(idProp);
+            if (id == null) {
+                throw new IllegalStateException("No @NodeId property in properties map!");
+            }
+
+            StringBuilder setClause = new StringBuilder();
+            props.keySet().stream()
+                    .filter(k -> !k.equals(idProp))
+                    .forEach(k -> setClause.append("n.").append(k).append(" = $").append(k).append(", "));
+
+            String cypher = "MERGE (n:" + label + " {" + idProp + ": $" + idProp + "}) ";
+            if (!setClause.isEmpty()) {
+                cypher += "SET " + setClause.substring(0, setClause.length() - 2) + " ";
+            }
+            cypher += "RETURN n AS node";
+
+            var result = tx.run(cypher, props);
             Record rec = result.single();
             String alias = resolveAlias(rec);
             T saved = entityMapper.map(rec, alias);
-
-            Object id = entityMapper.getNodeId(saved);
 
             persistRelationships(tx, label, id, entity.getRelationships());
             return saved;

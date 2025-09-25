@@ -174,12 +174,17 @@ public abstract class ReactiveRepository<T> {
     private Uni<T> createInternal(EntityWithRelations entity) {
         resetVisitor();
 
-        return runWriteQuerySingle(
-                "MERGE (n:" + label + " {id: $props.id}) " +
-                        "SET n += $props " +
-                        "RETURN n",
-                Map.of("props", entity.getProperties()))
-                .flatMap(saved -> persistRelationships(label, entityMapper.getNodeId(saved), entity.getRelationships())
+        String idProp = entityMapper.getNodeIdPropertyName();
+
+        String cypher = "MERGE (n:" + label + " {" + idProp + ": $props." + idProp + "}) " +
+                "SET n += $props " +
+                "RETURN n";
+
+        return runWriteQuerySingle(cypher, Map.of("props", entity.getProperties()))
+                .flatMap(saved -> persistRelationships(
+                        label,
+                        entityMapper.getNodeId(saved),
+                        entity.getRelationships())
                         .replaceWith(saved));
     }
 

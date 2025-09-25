@@ -33,6 +33,7 @@ public class MapperGenerator {
         MethodSpec mapMethod = generateMapMethod(entityType, processingEnv);
         MethodSpec toDbMethod = generateToDbMethod(entityType, processingEnv);
         MethodSpec getNodeIdMethod = generateGetNodeIdMethod(entityType);
+        MethodSpec getNodeIdPropertyNameMethod = generateGetNodeIdPropertyName(entityType);
 
         TypeSpec mapperClass = TypeSpec.classBuilder(mapperClassName)
                 .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
@@ -50,6 +51,7 @@ public class MapperGenerator {
                 .addMethod(mapMethod)
                 .addMethod(toDbMethod)
                 .addMethod(getNodeIdMethod)
+                .addMethod(getNodeIdPropertyNameMethod)
                 .addMethod(generateSetRelationMethod(entityType))
                 .addMethod(generateRegisterSelfMethod(entityType))
                 .build();
@@ -201,6 +203,20 @@ public class MapperGenerator {
                     methodBuilder.addStatement("return entity.$L()", getterName);
                 }
                 return methodBuilder.build();
+            }
+        }
+        throw new IllegalStateException("No field annotated with @NodeId in " + entityType.getSimpleName());
+    }
+
+    private MethodSpec generateGetNodeIdPropertyName(TypeElement entityType) {
+        for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
+            if (field.getAnnotation(NodeId.class) != null) {
+                return MethodSpec.methodBuilder("getNodeIdPropertyName")
+                        .addAnnotation(Override.class)
+                        .addModifiers(Modifier.PUBLIC)
+                        .returns(String.class)
+                        .addStatement("return $S", field.getSimpleName().toString())
+                        .build();
             }
         }
         throw new IllegalStateException("No field annotated with @NodeId in " + entityType.getSimpleName());
