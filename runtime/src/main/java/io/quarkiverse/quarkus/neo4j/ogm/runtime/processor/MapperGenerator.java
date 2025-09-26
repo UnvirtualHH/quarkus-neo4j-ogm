@@ -146,7 +146,7 @@ public class MapperGenerator {
                                     "Object targetId = registry.get($T.class).getNodeId(related)",
                                     ClassName.bestGuess(targetTypeName))
                             .addStatement(
-                                    "relationships.add(new $T($S, $T.$L, targetId, relatedWithRels))",
+                                    "relationships.add(new $T($S, $T.$L, targetId.toString(), relatedWithRels))",
                                     ClassName.get(RelationshipData.class),
                                     relType,
                                     ClassName.get(Direction.class),
@@ -165,7 +165,7 @@ public class MapperGenerator {
                                     ClassName.bestGuess(targetTypeName),
                                     getterName)
                             .addStatement(
-                                    "relationships.add(new $T($S, $T.$L, targetId, relatedWithRels))",
+                                    "relationships.add(new $T($S, $T.$L, targetId.toString(), relatedWithRels))",
                                     ClassName.get(RelationshipData.class),
                                     relType,
                                     ClassName.get(Direction.class),
