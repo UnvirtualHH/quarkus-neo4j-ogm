@@ -300,8 +300,7 @@ public abstract class ReactiveRepository<T> {
                     if (!shouldVisit) {
                         return Uni.createFrom().item(entity);
                     }
-                    return relationVisitor.markVisited(entity, visitorContext)
-                            .replaceWith(relationLoader.loadRelations(entity, currentDepth));
+                    return relationLoader.loadRelations(entity, currentDepth, visitorContext);
                 });
     }
 
@@ -329,7 +328,7 @@ public abstract class ReactiveRepository<T> {
                                 ReactiveRepository<Object> repo = (ReactiveRepository<Object>) reactiveRegistry
                                         .getReactiveRepository(entityClass);
                                 if (repo != null && repo.getRelationLoader() != null) {
-                                    return repo.getRelationLoader().loadRelations(entity, currentDepth);
+                                    return repo.getRelationLoader().loadRelations(entity, currentDepth, repo.visitorContext);
                                 }
                                 return Uni.createFrom().item(entity);
                             });

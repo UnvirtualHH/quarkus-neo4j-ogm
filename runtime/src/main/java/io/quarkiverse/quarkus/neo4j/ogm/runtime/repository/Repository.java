@@ -431,8 +431,6 @@ public abstract class Repository<T> {
             return;
         }
 
-        relationVisitor.markVisited(entity);
-
         Class<?> entityClass = entity.getClass();
         Repository<Object> repository = (Repository<Object>) registry.getRepository(entityClass);
 

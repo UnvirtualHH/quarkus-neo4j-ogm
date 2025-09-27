@@ -21,14 +21,12 @@ import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.ReactiveRelationLoader;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.Relationship;
 
 public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGenerator {
-
     @Override
     public void generateRelationLoader(
             String packageName,
             TypeElement entityType,
             String loaderClassName,
             ProcessingEnvironment processingEnv) {
-
         Types types = processingEnv.getTypeUtils();
         TypeMirror listType = processingEnv.getElementUtils()
                 .getTypeElement("java.util.List").asType();
@@ -60,8 +58,6 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
                 "ReactiveRepositoryRegistry");
         ClassName relationVisitorClass = ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository",
                 "ReactiveRelationVisitor");
-        ClassName visitorContextClass = ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository",
-                "ReactiveRelationVisitor.VisitorContext");
 
         return TypeSpec.classBuilder(loaderClassName)
                 .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
@@ -70,7 +66,6 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
                         ClassName.get(ReactiveRelationLoader.class), ClassName.bestGuess(qualifiedName)))
                 .addField(reactiveRegistryClass, "reactiveRegistry", Modifier.PRIVATE, Modifier.FINAL)
                 .addField(relationVisitorClass, "relationVisitor", Modifier.PRIVATE, Modifier.FINAL)
-                .addField(visitorContextClass, "visitorContext", Modifier.PRIVATE, Modifier.FINAL)
                 .addMethod(MethodSpec.constructorBuilder()
                         .addAnnotation(ClassName.get("jakarta.inject", "Inject"))
                         .addModifiers(Modifier.PUBLIC)
@@ -78,7 +73,6 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
                         .addParameter(relationVisitorClass, "relationVisitor")
                         .addStatement("this.reactiveRegistry = reactiveRegistry")
                         .addStatement("this.relationVisitor = relationVisitor")
-                        .addStatement("this.visitorContext = relationVisitor.newContext()")
                         .build())
                 .addMethod(MethodSpec.methodBuilder("getNodeId")
                         .addModifiers(Modifier.PRIVATE)
@@ -93,9 +87,16 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
     private MethodSpec.Builder buildReactiveLoaderWithDepth(TypeElement entityType, String qualifiedName,
             Types types, TypeMirror listType) {
         NodeEntity nodeAnnotation = entityType.getAnnotation(NodeEntity.class);
-        String sourceLabel = (nodeAnnotation != null && !nodeAnnotation.label().isEmpty())
-                ? nodeAnnotation.label()
-                : entityType.getSimpleName().toString();
+
+        String sourceLabel;
+        if (nodeAnnotation != null && !nodeAnnotation.label().isEmpty()) {
+            sourceLabel = nodeAnnotation.label();
+        } else {
+            sourceLabel = entityType.getSimpleName().toString();
+        }
+
+        ClassName visitorContextClass = ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository",
+                "ReactiveRelationVisitor.VisitorContext");
 
         MethodSpec.Builder builder = MethodSpec.methodBuilder("loadRelations")
                 .addAnnotation(Override.class)
@@ -104,15 +105,16 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
                         ClassName.bestGuess(qualifiedName)))
                 .addParameter(ClassName.bestGuess(qualifiedName), "entity")
                 .addParameter(int.class, "currentDepth")
+                .addParameter(visitorContextClass, "ctx")
                 .addStatement("Object id = getNodeId(entity)")
                 .beginControlFlow("if (id == null)")
                 .addStatement("return $T.createFrom().item(entity)", ClassName.get("io.smallrye.mutiny", "Uni"))
                 .endControlFlow();
 
-        builder.addCode("return relationVisitor.shouldVisit(entity, currentDepth, visitorContext)"
+        builder.addCode("return relationVisitor.shouldVisit(entity, currentDepth, ctx)"
                 + ".flatMap(shouldVisit -> {"
                 + " if (!shouldVisit) return $T.createFrom().item(entity);"
-                + " return relationVisitor.markVisited(entity, visitorContext)"
+                + " return relationVisitor.markVisited(entity, ctx)"
                 + "   .flatMap(ignore -> {\n", ClassName.get("io.smallrye.mutiny", "Uni"));
 
         builder.addCode(buildReactiveFieldLoadBody(entityType, qualifiedName, types, listType, sourceLabel));
@@ -144,7 +146,6 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
 
         for (VariableElement field : relationFields) {
             final String fieldName = field.getSimpleName().toString();
-
             final String fieldType = field.asType().toString();
             final boolean isList = types.isAssignable(field.asType(), types.erasure(listType));
             final String relatedType = isList
@@ -162,10 +163,10 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
 
             if (isList) {
                 block.addStatement(
-                        "$T $L = relationVisitor.shouldLoadRelationship(entity, $S, currentDepth, visitorContext)"
+                        "$T $L = relationVisitor.shouldLoadRelationship(entity, $S, currentDepth, ctx)"
                                 + ".flatMap(shouldLoad -> shouldLoad"
                                 + " ? reactiveRegistry.getReactiveRepository($T.class).query($S, $T.of($S, id))"
-                                + "     .onItem().transformToUniAndMerge(item -> loadRelationRecursively(item, currentDepth + 1).map(loaded -> ($T) loaded))"
+                                + "     .onItem().transformToUniAndMerge(item -> loadRelationRecursively(item, currentDepth + 1, ctx).map(loaded -> ($T) loaded))"
                                 + "     .collect().asList()"
                                 + " : $T.createFrom().item(new $T<$T>()))",
                         ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
@@ -181,12 +182,12 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
                         ClassName.bestGuess(relatedType));
             } else {
                 block.addStatement(
-                        "$T $L = relationVisitor.shouldLoadRelationship(entity, $S, currentDepth, visitorContext)"
+                        "$T $L = relationVisitor.shouldLoadRelationship(entity, $S, currentDepth, ctx)"
                                 + ".flatMap(shouldLoad -> {"
                                 + " if (!shouldLoad) return $T.createFrom().nullItem();"
                                 + " return reactiveRegistry.getReactiveRepository($T.class).querySingle($S, $T.of($S, id))"
                                 + "   .flatMap(item -> item != null"
-                                + "       ? loadRelationRecursively(item, currentDepth + 1).map(loaded -> ($T) loaded)"
+                                + "       ? loadRelationRecursively(item, currentDepth + 1, ctx).map(loaded -> ($T) loaded)"
                                 + "       : $T.createFrom().nullItem());"
                                 + " })",
                         ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
@@ -224,6 +225,9 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
     }
 
     private MethodSpec.Builder buildReactiveRecursiveLoader() {
+        ClassName visitorContextClass = ClassName.get("io.quarkiverse.quarkus.neo4j.ogm.runtime.repository",
+                "ReactiveRelationVisitor.VisitorContext");
+
         return MethodSpec.methodBuilder("loadRelationRecursively")
                 .addModifiers(Modifier.PRIVATE)
                 .addAnnotation(AnnotationSpec.builder(SuppressWarnings.class)
@@ -233,17 +237,18 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
                         ClassName.get(Object.class)))
                 .addParameter(Object.class, "entity")
                 .addParameter(int.class, "currentDepth")
+                .addParameter(visitorContextClass, "ctx")
                 .addStatement("if (entity == null) return $T.createFrom().nullItem()",
                         ClassName.get("io.smallrye.mutiny", "Uni"))
-                .addStatement("return relationVisitor.shouldVisit(entity, currentDepth, visitorContext)"
+                .addStatement("return relationVisitor.shouldVisit(entity, currentDepth, ctx)"
                         + ".flatMap(shouldVisit -> {"
                         + " if (!shouldVisit) return $T.createFrom().item(entity);"
-                        + " return relationVisitor.markVisited(entity, visitorContext)"
+                        + " return relationVisitor.markVisited(entity, ctx)"
                         + "   .flatMap(ignore -> {"
                         + "     $T<$T> repository = ($T<$T>) reactiveRegistry.getReactiveRepository(entity.getClass());"
                         + "     if (repository != null && repository.getRelationLoader() != null) {"
                         + "        $T<$T> loader = ($T<$T>) repository.getRelationLoader();"
-                        + "        return loader.loadRelations(entity, currentDepth + 1);"
+                        + "        return loader.loadRelations(entity, currentDepth + 1, ctx);"
                         + "     }"
                         + "     return $T.createFrom().item(entity);"
                         + "   });"

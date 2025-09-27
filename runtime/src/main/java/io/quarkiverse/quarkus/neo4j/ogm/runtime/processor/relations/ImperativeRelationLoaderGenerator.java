@@ -91,9 +91,13 @@ public class ImperativeRelationLoaderGenerator extends AbstractRelationLoaderGen
     private MethodSpec.Builder buildImperativeLoaderWithDepth(TypeElement entityType, String qualifiedName,
             Types types, TypeMirror listType) {
         NodeEntity nodeAnnotation = entityType.getAnnotation(NodeEntity.class);
-        String sourceLabel = (nodeAnnotation != null && !nodeAnnotation.label().isEmpty())
-                ? nodeAnnotation.label()
-                : entityType.getSimpleName().toString();
+
+        String sourceLabel;
+        if (nodeAnnotation != null && !nodeAnnotation.label().isEmpty()) {
+            sourceLabel = nodeAnnotation.label();
+        } else {
+            sourceLabel = entityType.getSimpleName().toString();
+        }
 
         MethodSpec.Builder builder = MethodSpec.methodBuilder("loadRelations")
                 .addAnnotation(Override.class)
