@@ -481,7 +481,7 @@ public abstract class Repository<T> {
                     throw new UnsupportedOperationException("Direction not supported: " + rel.getDirection());
             };
 
-            tx.run(query, Values.parameters("from", fromId, "to", toId));
+            tx.run(query, Values.parameters("from", fromId, "to", toId.toString()));
         }
     }
 

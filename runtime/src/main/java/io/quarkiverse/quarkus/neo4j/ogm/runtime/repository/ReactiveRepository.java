@@ -458,7 +458,7 @@ public abstract class ReactiveRepository<T> {
                                 default ->
                                     throw new UnsupportedOperationException("Unsupported direction: " + rel.getDirection());
                             };
-                            return runWriteQueryVoid(query, Map.of("from", fromId, "to", toId));
+                            return runWriteQueryVoid(query, Map.of("from", fromId, "to", toId.toString()));
                         })
                         .collect().asList()
                         .replaceWithVoid());
