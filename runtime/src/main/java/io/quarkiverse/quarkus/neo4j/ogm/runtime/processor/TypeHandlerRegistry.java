@@ -3,7 +3,10 @@ package io.quarkiverse.quarkus.neo4j.ogm.runtime.processor;
 import java.util.List;
 import java.util.Optional;
 
+import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
 
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.types.*;
 
@@ -29,8 +32,16 @@ public class TypeHandlerRegistry {
             new SetTypeHandler(),
             new ByteArrayTypeHandler());
 
-    public static Optional<TypeHandler> findHandler(VariableElement field) {
-        return handlers.stream().filter(h -> h.supports(field)).findFirst();
+    private static Types types;
+    private static Elements elements;
+
+    public static void init(ProcessingEnvironment env) {
+        types = env.getTypeUtils();
+        elements = env.getElementUtils();
+    }
+
+    public static Optional<TypeHandler> findHandler(VariableElement field, Types types, Elements elements) {
+        return handlers.stream().filter(h -> h.supports(field, types, elements)).findFirst();
     }
 
     public static Optional<TypeHandler> findHandler(String fqcn) {

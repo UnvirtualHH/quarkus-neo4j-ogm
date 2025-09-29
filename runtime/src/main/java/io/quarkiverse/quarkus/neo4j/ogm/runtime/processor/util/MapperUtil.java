@@ -1,6 +1,9 @@
 package io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.util;
 
+import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
 
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.NodeId;
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.mapping.Property;
@@ -42,5 +45,18 @@ public class MapperUtil {
         }
 
         return rawType;
+    }
+
+    public static boolean isOfType(VariableElement field, String fqcn, Types types, Elements elements) {
+        if (field.asType().getKind().isPrimitive()) {
+            return field.asType().toString().equals(fqcn);
+        }
+
+        TypeElement te = elements.getTypeElement(fqcn);
+        if (te == null) {
+            return field.asType().toString().equals(fqcn);
+        }
+
+        return types.isSameType(types.erasure(field.asType()), te.asType());
     }
 }

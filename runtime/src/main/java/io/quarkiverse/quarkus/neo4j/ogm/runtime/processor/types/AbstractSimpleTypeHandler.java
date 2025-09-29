@@ -3,6 +3,9 @@ package io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.types;
 import static io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil.*;
 
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
 
 import com.palantir.javapoet.CodeBlock;
 
@@ -14,9 +17,9 @@ public abstract class AbstractSimpleTypeHandler implements TypeHandler {
 
     protected abstract String readMethod();
 
-    @Override
-    public boolean supports(VariableElement field) {
-        return field.asType().toString().equals(getSupportedType());
+    public boolean supports(VariableElement field, Types types, Elements elements) {
+        TypeMirror supportedType = elements.getTypeElement(getSupportedType()).asType();
+        return types.isSameType(types.erasure(field.asType()), supportedType);
     }
 
     @Override

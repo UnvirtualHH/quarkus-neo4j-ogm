@@ -1,11 +1,13 @@
 package io.quarkiverse.quarkus.neo4j.ogm.runtime.processor;
 
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
 
 import com.palantir.javapoet.CodeBlock;
 
 public interface TypeHandler {
-    default boolean supports(VariableElement field) {
+    default boolean supports(VariableElement field, Types types, Elements elements) {
         return false;
     }
 

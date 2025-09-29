@@ -72,7 +72,7 @@ final class QueryMethodFactory {
             mb.addParameter(resolved, p);
         }
 
-        CodeBlock mapArgs = buildMapArgs(paramNames, explicitTypes, entityType);
+        CodeBlock mapArgs = buildMapArgs(paramNames, explicitTypes, entityType, env);
 
         String repoCall;
         if (!transactional) {
@@ -150,7 +150,8 @@ final class QueryMethodFactory {
     private static CodeBlock buildMapArgs(
             List<String> paramNames,
             Map<String, TypeName> explicitTypes,
-            TypeElement entityType) {
+            TypeElement entityType,
+            ProcessingEnvironment env) {
 
         CodeBlock.Builder cb = CodeBlock.builder();
         boolean first = true;
@@ -171,7 +172,8 @@ final class QueryMethodFactory {
                     cb.add("$L", p);
                 }
             } else if (field != null) {
-                Optional<TypeHandler> handler = TypeHandlerRegistry.findHandler(field);
+                Optional<TypeHandler> handler = TypeHandlerRegistry.findHandler(field, env.getTypeUtils(),
+                        env.getElementUtils());
                 if (handler.isPresent()) {
                     cb.add(handler.get().generateParameterConversion(p));
                 } else {

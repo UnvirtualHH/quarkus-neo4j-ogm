@@ -3,16 +3,19 @@ package io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.types;
 import static io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil.*;
 
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
 
 import com.palantir.javapoet.CodeBlock;
 
 import io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.TypeHandler;
+import io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil;
 
 public class LocalDateTimeTypeHandler implements TypeHandler {
 
     @Override
-    public boolean supports(VariableElement field) {
-        return field.asType().toString().equals("java.time.LocalDateTime");
+    public boolean supports(VariableElement field, Types types, Elements elements) {
+        return MapperUtil.isOfType(field, "java.time.LocalDateTime", types, elements);
     }
 
     @Override

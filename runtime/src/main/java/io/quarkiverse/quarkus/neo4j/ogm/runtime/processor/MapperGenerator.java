@@ -3,6 +3,7 @@ package io.quarkiverse.quarkus.neo4j.ogm.runtime.processor;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.*;
@@ -30,6 +31,8 @@ public class MapperGenerator {
 
     public void generateMapper(String packageName, TypeElement entityType, String mapperClassName,
             ProcessingEnvironment processingEnv) {
+        TypeHandlerRegistry.init(processingEnv);
+
         MethodSpec mapMethod = generateMapMethod(entityType, processingEnv);
         MethodSpec toDbMethod = generateToDbMethod(entityType, processingEnv);
         MethodSpec getNodeIdMethod = generateGetNodeIdMethod(entityType);
@@ -88,18 +91,29 @@ public class MapperGenerator {
                 .addStatement("$T nodeValue = record.get(alias)", ClassName.get("org.neo4j.driver", "Value"));
 
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
-            if (!shouldIncludeField(field))
+            if (!shouldIncludeField(field, env))
                 continue;
-            generateMapStatement(field, builder);
+            generateMapStatement(field, builder, env);
         }
 
         builder.addStatement("return instance");
         return builder.build();
     }
 
-    private void generateMapStatement(VariableElement field, MethodSpec.Builder builder) {
-        TypeHandlerRegistry.findHandler(field)
-                .ifPresent(handler -> builder.addCode(handler.generateSetterCode(field, "instance", "nodeValue")));
+    private void generateMapStatement(VariableElement field, MethodSpec.Builder builder, ProcessingEnvironment env) {
+        Optional<TypeHandler> handler = TypeHandlerRegistry.findHandler(field, env.getTypeUtils(), env.getElementUtils());
+        if (handler.isPresent()) {
+            builder.addCode(handler.get().generateSetterCode(field, "instance", "nodeValue"));
+        } else {
+            env.getMessager().printMessage(
+                    Diagnostic.Kind.WARNING,
+                    String.format(
+                            "No TypeHandler found for field '%s' of type '%s' in entity '%s'. Falling back to skipping or generic handling.",
+                            field.getSimpleName(),
+                            field.asType(),
+                            field.getEnclosingElement().getSimpleName()),
+                    field);
+        }
     }
 
     private MethodSpec generateToDbMethod(TypeElement entityType, ProcessingEnvironment env) {
@@ -119,10 +133,24 @@ public class MapperGenerator {
 
         // Properties
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
-            if (!shouldIncludeField(field))
+            if (!shouldIncludeField(field, env))
                 continue;
-            TypeHandlerRegistry.findHandler(field)
-                    .ifPresent(handler -> builder.addCode(handler.generateToDbCode(field, "entity", "properties")));
+
+            Optional<TypeHandler> handler = TypeHandlerRegistry.findHandler(
+                    field, env.getTypeUtils(), env.getElementUtils());
+
+            if (handler.isPresent()) {
+                builder.addCode(handler.get().generateToDbCode(field, "entity", "properties"));
+            } else {
+                env.getMessager().printMessage(
+                        Diagnostic.Kind.WARNING,
+                        String.format(
+                                "No TypeHandler found for field '%s' of type '%s' in entity '%s'. Falling back to skipping or generic handling.",
+                                field.getSimpleName(),
+                                field.asType(),
+                                entityType.getSimpleName()),
+                        field);
+            }
         }
 
         // Relationships (persist only)
@@ -282,7 +310,7 @@ public class MapperGenerator {
                 .build();
     }
 
-    private boolean shouldIncludeField(VariableElement field) {
+    private boolean shouldIncludeField(VariableElement field, ProcessingEnvironment env) {
         if (strategy == FieldMappingStrategy.EXPLICIT) {
             return field.getAnnotation(Property.class) != null
                     || field.getAnnotation(NodeId.class) != null
@@ -290,7 +318,7 @@ public class MapperGenerator {
                     || field.getAnnotation(Enumerated.class) != null;
         } else {
             return field.getAnnotation(Transient.class) == null
-                    && TypeHandlerRegistry.findHandler(field).isPresent();
+                    && TypeHandlerRegistry.findHandler(field, env.getTypeUtils(), env.getElementUtils()).isPresent();
         }
     }
 }

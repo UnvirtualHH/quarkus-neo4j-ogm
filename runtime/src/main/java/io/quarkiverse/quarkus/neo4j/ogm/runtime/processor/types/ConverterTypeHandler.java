@@ -5,6 +5,8 @@ import static io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.MirroredTypeException;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
 
 import com.palantir.javapoet.CodeBlock;
 import com.palantir.javapoet.TypeName;
@@ -15,7 +17,7 @@ import io.quarkiverse.quarkus.neo4j.ogm.runtime.processor.TypeHandler;
 public class ConverterTypeHandler implements TypeHandler {
 
     @Override
-    public boolean supports(VariableElement field) {
+    public boolean supports(VariableElement field, Types types, Elements elements) {
         return field.getAnnotation(Convert.class) != null;
     }
 
