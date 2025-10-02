@@ -31,7 +31,7 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <quarkus.version>3.28.2</quarkus.version>
         <javapoet.version>0.7.0</javapoet.version>
-        <quarkus.neo4j.version>5.7.1</quarkus.neo4j.version>
+        <quarkus.neo4j.version>6.0.0</quarkus.neo4j.version>
     </properties>
 
     <dependencyManagement>
