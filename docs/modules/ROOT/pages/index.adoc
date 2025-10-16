@@ -6,14 +6,14 @@ TIP: Describe what the extension does here.
 
 == Installation
 
-If you want to use this extension, you need to add the `io.quarkiverse.quarkus-neo4j-ogm:quarkus-neo4j-ogm` extension first to your build file.
+If you want to use this extension, you need to add the `de.prgrm.quarkus-neo4j-ogm:quarkus-neo4j-ogm` extension first to your build file.
 
 For instance, with Maven, add the following dependency to your POM file:
 
 [source,xml,subs=attributes+]
 ----
 <dependency>
-    <groupId>io.quarkiverse.quarkus-neo4j-ogm</groupId>
+    <groupId>de.prgrm.quarkus-neo4j-ogm</groupId>
     <artifactId>quarkus-neo4j-ogm</artifactId>
     <version>{project-version}</version>
 </dependency>
