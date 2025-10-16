@@ -14,7 +14,6 @@
     <name>Quarkus Neo4j Ogm - Documentation</name>
 
     <dependencies>
-        <!-- Make sure the doc is built after the other artifacts -->
         <dependency>
             <groupId>de.prgrm.quarkus-neo4j-ogm</groupId>
             <artifactId>quarkus-neo4j-ogm-deployment</artifactId>

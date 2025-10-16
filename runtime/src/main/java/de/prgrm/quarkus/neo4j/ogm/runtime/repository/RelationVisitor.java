@@ -4,9 +4,9 @@ import java.lang.reflect.Field;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
-import de.prgrm.quarkus.neo4j.ogm.runtime.enums.Direction;
 import jakarta.enterprise.context.ApplicationScoped;
 
+import de.prgrm.quarkus.neo4j.ogm.runtime.enums.Direction;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.Relationship;
 
 /**

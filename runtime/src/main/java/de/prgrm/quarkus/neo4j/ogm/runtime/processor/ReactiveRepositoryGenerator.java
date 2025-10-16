@@ -8,7 +8,6 @@ import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 
-import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.Relationship;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -18,6 +17,8 @@ import com.palantir.javapoet.MethodSpec;
 import com.palantir.javapoet.ParameterizedTypeName;
 import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
+
+import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.Relationship;
 
 public class ReactiveRepositoryGenerator {
 

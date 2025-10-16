@@ -9,7 +9,6 @@ import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 
 import de.prgrm.quarkus.neo4j.ogm.runtime.processor.types.*;
-import de.prgrm.quarkus.neo4j.ogm.runtime.processor.types.*;
 
 public class TypeHandlerRegistry {
 

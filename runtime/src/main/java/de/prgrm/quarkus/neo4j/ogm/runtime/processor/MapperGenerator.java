@@ -10,7 +10,6 @@ import javax.lang.model.element.*;
 import javax.lang.model.util.ElementFilter;
 import javax.tools.Diagnostic;
 
-import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.*;
 import jakarta.enterprise.context.ApplicationScoped;
 
 import com.palantir.javapoet.*;

@@ -6,6 +6,7 @@
         <groupId>de.prgrm.quarkus-neo4j-ogm</groupId>
         <artifactId>quarkus-neo4j-ogm-parent</artifactId>
         <version>999-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>quarkus-neo4j-ogm-integration-tests</artifactId>
     <name>Quarkus Neo4j Ogm - Integration Tests</name>
