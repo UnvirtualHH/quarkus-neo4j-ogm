@@ -19,10 +19,17 @@
     </modules>
 
     <scm>
-        <connection>scm:git:git@github.com:quarkiverse/quarkus-neo4j-ogm.git</connection>
-        <developerConnection>scm:git:git@github.com:quarkiverse/quarkus-neo4j-ogm.git</developerConnection>
-        <url>https://github.com/quarkiverse/quarkus-neo4j-ogm</url>
+        <connection>scm:git:git@github.com:UnvirtualHH/quarkus-neo4j-ogm.git</connection>
+        <developerConnection>scm:git:git@github.com:UnvirtualHH/quarkus-neo4j-ogm.git</developerConnection>
+        <url>https://github.com/UnvirtualHH/quarkus-neo4j-ogm</url>
     </scm>
+
+    <developers>
+        <developer>
+            <id>fhell</id>
+            <name>Florian Hell</name>
+        </developer>
+    </developers>
 
     <properties>
         <compiler-plugin.version>3.14.1</compiler-plugin.version>
@@ -67,7 +74,41 @@
                     <version>${quarkus.version}</version>
                 </plugin>
 
-            </plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-release-plugin</artifactId>
+                    <version>3.1.1</version>
+                    <configuration>
+                        <autoVersionSubmodules>true</autoVersionSubmodules>
+                        <tagNameFormat>v@{project.version}</tagNameFormat>
+                        <preparationGoals>clean verify</preparationGoals>
+                        <goals>deploy</goals>
+                        <releaseProfiles>release</releaseProfiles>
+                    </configuration>
+                </plugin>
+
+                <plugin>
+                    <groupId>org.sonatype.central</groupId>
+                    <artifactId>central-publishing-maven-plugin</artifactId>
+                    <version>0.9.0</version>
+                    <extensions>true</extensions>
+                </plugin>
+
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-gpg-plugin</artifactId>
+                    <version>3.2.8</version>
+                    <executions>
+                        <execution>
+                            <id>sign-artifacts</id>
+                            <phase>verify</phase>
+                            <goals>
+                                <goal>sign</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+        </plugins>
         </pluginManagement>
     </build>
 
@@ -95,6 +136,39 @@
             <modules>
                 <module>integration-tests</module>
             </modules>
+        </profile>
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.12.0</version>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
     </profiles>
 </project>
