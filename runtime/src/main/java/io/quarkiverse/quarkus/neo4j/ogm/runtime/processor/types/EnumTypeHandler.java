@@ -25,17 +25,23 @@ public class EnumTypeHandler implements TypeHandler {
         Enumerated enumerated = field.getAnnotation(Enumerated.class);
         ClassName enumType = ClassName.bestGuess(field.asType().toString());
 
-        String accessor = enumerated.value() == EnumType.ORDINAL
-                ? "values()[%s.get($S).asInt()]"
-                : "valueOf(%s.get($S).asString())";
-
-        return CodeBlock.of(
-                "$L.$L($T." + accessor + ");\n",
-                targetVar,
-                resolveSetterName(field),
-                enumType,
-                valueSource,
-                getPropertyName(field));
+        if (enumerated.value() == EnumType.ORDINAL) {
+            return CodeBlock.of(
+                    "$L.$L($T.values()[$L.get($S).asInt()]);\n",
+                    targetVar,
+                    resolveSetterName(field),
+                    enumType,
+                    valueSource,
+                    getPropertyName(field));
+        } else {
+            return CodeBlock.of(
+                    "$L.$L($T.valueOf($L.get($S).asString()));\n",
+                    targetVar,
+                    resolveSetterName(field),
+                    enumType,
+                    valueSource,
+                    getPropertyName(field));
+        }
     }
 
     @Override
