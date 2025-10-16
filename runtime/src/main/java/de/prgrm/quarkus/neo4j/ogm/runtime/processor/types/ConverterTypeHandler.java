@@ -1,0 +1,66 @@
+package de.prgrm.quarkus.neo4j.ogm.runtime.processor.types;
+
+import static de.prgrm.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil.*;
+
+import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.MirroredTypeException;
+import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
+
+import com.palantir.javapoet.CodeBlock;
+import com.palantir.javapoet.TypeName;
+
+import de.prgrm.quarkus.neo4j.ogm.runtime.enums.Convert;
+import de.prgrm.quarkus.neo4j.ogm.runtime.processor.TypeHandler;
+
+public class ConverterTypeHandler implements TypeHandler {
+
+    @Override
+    public boolean supports(VariableElement field, Types types, Elements elements) {
+        return field.getAnnotation(Convert.class) != null;
+    }
+
+    @Override
+    public CodeBlock generateSetterCode(VariableElement field, String targetVar, String valueSource) {
+        TypeMirror converterType = getConverterType(field);
+        TypeName converterClass = TypeName.get(converterType);
+        String converterVar = field.getSimpleName().toString() + "Converter";
+
+        return CodeBlock.builder()
+                .addStatement("$T $L = new $T()", converterClass, converterVar, converterClass)
+                .addStatement("$L.$L($L.toEntityAttribute($L.get($S).asString()))",
+                        targetVar,
+                        resolveSetterName(field),
+                        converterVar,
+                        valueSource,
+                        getPropertyName(field))
+                .build();
+    }
+
+    @Override
+    public CodeBlock generateToDbCode(VariableElement field, String entityVar, String mapVar) {
+        TypeMirror converterType = getConverterType(field);
+        TypeName converterClass = TypeName.get(converterType);
+        String converterVar = field.getSimpleName().toString() + "Converter";
+        String getter = resolveGetterName(field);
+        String property = getPropertyName(field);
+
+        return CodeBlock.builder()
+                .addStatement("$T $L = new $T()", converterClass, converterVar, converterClass)
+                .addStatement("if ($L.$L() != null) $L.put($S, $L.toGraphProperty($L.$L()))",
+                        entityVar, getter,
+                        mapVar, property,
+                        converterVar, entityVar, getter)
+                .build();
+    }
+
+    private TypeMirror getConverterType(VariableElement field) {
+        try {
+            field.getAnnotation(Convert.class).value(); // Will throw
+            throw new IllegalStateException("Expected MirroredTypeException");
+        } catch (MirroredTypeException mte) {
+            return mte.getTypeMirror();
+        }
+    }
+}

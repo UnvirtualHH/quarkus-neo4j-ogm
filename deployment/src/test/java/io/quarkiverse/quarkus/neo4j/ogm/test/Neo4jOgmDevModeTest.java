@@ -1,4 +1,4 @@
-package io.quarkiverse.quarkus.neo4j.ogm.test;
+package de.prgrm.quarkus.neo4j.ogm.test;
 
 import org.jboss.shrinkwrap.api.ShrinkWrap;
 import org.jboss.shrinkwrap.api.spec.JavaArchive;
