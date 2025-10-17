@@ -25,10 +25,9 @@
     </modules>
 
     <scm>
-        <connection>scm:git:git@github.com:UnvirtualHH/quarkus-neo4j-ogm.git</connection>
+        <connection>scm:git:https://github.com/UnvirtualHH/quarkus-neo4j-ogm.git</connection>
         <developerConnection>scm:git:git@github.com:UnvirtualHH/quarkus-neo4j-ogm.git</developerConnection>
         <url>https://github.com/UnvirtualHH/quarkus-neo4j-ogm</url>
-        <tag>HEAD</tag>
     </scm>
 
     <developers>
