@@ -50,7 +50,9 @@ public class RepositoryGenerator {
                 .addParameter(ClassName.get("org.neo4j.driver", "Driver"), "driver")
                 .addParameter(ClassName.get(packageName, mapperClassName), "entityMapper")
                 .addParameter(ClassName.get("de.prgrm.quarkus.neo4j.ogm.runtime.repository", "RepositoryRegistry"),
-                        "registry");
+                        "registry")
+                .addParameter(ClassName.get("de.prgrm.quarkus.neo4j.ogm.runtime.tx", "TransactionManager"),
+                        "txManager");
 
         if (hasRelationships) {
             String loaderClassName = entityType.getSimpleName() + "RelationLoader";
@@ -61,10 +63,11 @@ public class RepositoryGenerator {
                 "relationVisitor");
 
         if (hasRelationships) {
-            constructorBuilder.addStatement("super(driver, $S, entityMapper, registry, relationLoader, relationVisitor)",
+            constructorBuilder.addStatement(
+                    "super(driver, $S, entityMapper, registry, relationLoader, relationVisitor, txManager)",
                     label);
         } else {
-            constructorBuilder.addStatement("super(driver, $S, entityMapper, registry, relationVisitor)", label);
+            constructorBuilder.addStatement("super(driver, $S, entityMapper, registry, relationVisitor, txManager)", label);
         }
 
         MethodSpec constructor = constructorBuilder.build();

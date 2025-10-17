@@ -15,6 +15,7 @@ import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.RelationshipData;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Pageable;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Paged;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Sortable;
+import de.prgrm.quarkus.neo4j.ogm.runtime.tx.TransactionManager;
 
 public abstract class Repository<T> {
 
@@ -23,7 +24,8 @@ public abstract class Repository<T> {
     protected final EntityMapper<T> entityMapper;
     protected final RepositoryRegistry registry;
     protected final RelationLoader<T> relationLoader;
-    protected RelationVisitor relationVisitor;
+    protected final RelationVisitor relationVisitor;
+    protected final TransactionManager txManager;
 
     public Repository() {
         this.driver = null;
@@ -31,35 +33,41 @@ public abstract class Repository<T> {
         this.entityMapper = null;
         this.registry = null;
         this.relationLoader = null;
+        this.relationVisitor = null;
+        this.txManager = null;
     }
 
-    public Repository(Driver driver, String label, EntityMapper<T> entityMapper, RepositoryRegistry registry) {
+    public Repository(Driver driver, String label, EntityMapper<T> entityMapper, RepositoryRegistry registry,
+            TransactionManager txManager) {
         this.driver = driver;
         this.label = label;
         this.entityMapper = entityMapper;
         this.registry = registry;
         this.relationLoader = null;
-        this.relationVisitor = null; // Will be null for entities without relationships
+        this.relationVisitor = null;
+        this.txManager = txManager;
     }
 
     public Repository(Driver driver, String label, EntityMapper<T> entityMapper, RepositoryRegistry registry,
-            RelationVisitor relationVisitor) {
+            RelationVisitor relationVisitor, TransactionManager txManager) {
         this.driver = driver;
         this.label = label;
         this.entityMapper = entityMapper;
         this.registry = registry;
         this.relationLoader = null;
         this.relationVisitor = relationVisitor;
+        this.txManager = txManager;
     }
 
     public Repository(Driver driver, String label, EntityMapper<T> entityMapper, RepositoryRegistry registry,
-            RelationLoader<T> relationLoader, RelationVisitor relationVisitor) {
+            RelationLoader<T> relationLoader, RelationVisitor relationVisitor, TransactionManager txManager) {
         this.driver = driver;
         this.label = label;
         this.entityMapper = entityMapper;
         this.registry = registry;
         this.relationLoader = relationLoader;
         this.relationVisitor = relationVisitor;
+        this.txManager = txManager;
     }
 
     protected abstract Class<T> getEntityType();
@@ -71,6 +79,10 @@ public abstract class Repository<T> {
     // ========================= Transaction Helpers =========================
 
     private <R> R inWriteTx(Function<Transaction, R> work) {
+        if (txManager != null && txManager.isTransactionActive()) {
+            return work.apply(txManager.getOrCreateTransaction());
+        }
+
         try (Session session = driver.session()) {
             try (Transaction tx = session.beginTransaction()) {
                 R result = work.apply(tx);
@@ -81,6 +93,11 @@ public abstract class Repository<T> {
     }
 
     private void inWriteTxVoid(Consumer<Transaction> work) {
+        if (txManager != null && txManager.isTransactionActive()) {
+            work.accept(txManager.getOrCreateTransaction());
+            return;
+        }
+
         try (Session session = driver.session()) {
             try (Transaction tx = session.beginTransaction()) {
                 work.accept(tx);
@@ -90,6 +107,10 @@ public abstract class Repository<T> {
     }
 
     private <R> R inReadTx(Function<Transaction, R> work) {
+        if (txManager != null && txManager.isTransactionActive()) {
+            return work.apply(txManager.getOrCreateTransaction());
+        }
+
         try (Session session = driver.session()) {
             try (Transaction tx = session.beginTransaction()) {
                 return work.apply(tx);

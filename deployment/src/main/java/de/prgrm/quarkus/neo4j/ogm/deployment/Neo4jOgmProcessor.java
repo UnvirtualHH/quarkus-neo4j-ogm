@@ -5,6 +5,7 @@ import de.prgrm.quarkus.neo4j.ogm.runtime.repository.ReactiveRelationVisitor;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.ReactiveRepositoryRegistry;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.RelationVisitor;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.RepositoryRegistry;
+import de.prgrm.quarkus.neo4j.ogm.runtime.tx.TransactionManager;
 import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
@@ -23,6 +24,7 @@ class Neo4jOgmProcessor {
     void registerBeans(BuildProducer<AdditionalBeanBuildItem> additionalBeans) {
         additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(RelationVisitor.class));
         additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(ReactiveRelationVisitor.class));
+        additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(TransactionManager.class));
         additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(EntityMapperRegistry.class));
         additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(RepositoryRegistry.class));
         additionalBeans.produce(AdditionalBeanBuildItem.unremovableOf(ReactiveRepositoryRegistry.class));
