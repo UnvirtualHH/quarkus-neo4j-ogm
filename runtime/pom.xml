@@ -1,4 +1,7 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
@@ -9,31 +12,36 @@
     </parent>
 
     <artifactId>quarkus-neo4j-ogm</artifactId>
-    <name>Quarkus Neo4j Ogm - Runtime</name>
+    <name>Quarkus Neo4j OGM - Runtime</name>
+    <description>Runtime module for the Quarkus Neo4j OGM extension</description>
 
     <dependencies>
+        <!-- Quarkus Neo4j runtime -->
         <dependency>
             <groupId>io.quarkiverse.neo4j</groupId>
             <artifactId>quarkus-neo4j</artifactId>
             <version>${quarkus.neo4j.version}</version>
         </dependency>
 
+        <!-- JavaPoet for code generation -->
         <dependency>
             <groupId>com.palantir.javapoet</groupId>
             <artifactId>javapoet</artifactId>
             <version>${javapoet.version}</version>
         </dependency>
 
+        <!-- AutoService for annotation processing -->
         <dependency>
             <groupId>com.google.auto.service</groupId>
             <artifactId>auto-service</artifactId>
             <version>1.1.1</version>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 
     <build>
         <plugins>
-            <!-- Quarkus extension plugin -->
+            <!-- Quarkus extension descriptor generator -->
             <plugin>
                 <groupId>io.quarkus</groupId>
                 <artifactId>quarkus-extension-maven-plugin</artifactId>
@@ -44,13 +52,15 @@
                             <goal>extension-descriptor</goal>
                         </goals>
                         <configuration>
-                            <deployment>${project.groupId}:${project.artifactId}-deployment:${project.version}
+                            <deployment>
+                                ${project.groupId}:${project.artifactId}-deployment:${project.version}
                             </deployment>
                         </configuration>
                     </execution>
                 </executions>
             </plugin>
 
+            <!-- Jandex index for reflection / injection -->
             <plugin>
                 <groupId>io.smallrye</groupId>
                 <artifactId>jandex-maven-plugin</artifactId>
@@ -65,8 +75,7 @@
                 </executions>
             </plugin>
 
-
-            <!-- Compiler plugin (optional for AP) -->
+            <!-- Annotation processors -->
             <plugin>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <executions>

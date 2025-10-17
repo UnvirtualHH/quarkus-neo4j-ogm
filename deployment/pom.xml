@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
@@ -8,14 +10,17 @@
         <version>1.0.1-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
+
     <artifactId>quarkus-neo4j-ogm-deployment</artifactId>
-    <name>Quarkus Neo4j Ogm - Deployment</name>
+    <name>Quarkus Neo4j OGM - Deployment</name>
+    <description>Deployment module for Quarkus Neo4j OGM extension</description>
 
     <dependencies>
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-arc-deployment</artifactId>
         </dependency>
+
         <dependency>
             <groupId>de.prgrm.quarkus-neo4j-ogm</groupId>
             <artifactId>quarkus-neo4j-ogm</artifactId>
@@ -33,7 +38,7 @@
             <artifactId>quarkus-junit5-internal</artifactId>
             <scope>test</scope>
         </dependency>
-</dependencies>
+    </dependencies>
 
     <build>
         <plugins>

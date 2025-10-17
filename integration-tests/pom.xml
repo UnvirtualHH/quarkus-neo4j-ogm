@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
@@ -8,11 +10,13 @@
         <version>1.0.1-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
+
     <artifactId>quarkus-neo4j-ogm-integration-tests</artifactId>
-    <name>Quarkus Neo4j Ogm - Integration Tests</name>
+    <name>Quarkus Neo4j OGM - Integration Tests</name>
+    <description>Integration tests for the Quarkus Neo4j OGM extension</description>
 
     <properties>
-        <skipITs>true</skipITs>
+        <skipITs>false</skipITs>
     </properties>
 
     <dependencies>
@@ -20,11 +24,14 @@
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-rest</artifactId>
         </dependency>
+
         <dependency>
             <groupId>de.prgrm.quarkus-neo4j-ogm</groupId>
             <artifactId>quarkus-neo4j-ogm</artifactId>
             <version>${project.version}</version>
         </dependency>
+
+        <!-- Test dependencies -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-junit5</artifactId>
@@ -35,11 +42,11 @@
             <artifactId>rest-assured</artifactId>
             <scope>test</scope>
         </dependency>
-
     </dependencies>
 
     <build>
         <plugins>
+            <!-- Build the Quarkus app -->
             <plugin>
                 <groupId>io.quarkus</groupId>
                 <artifactId>quarkus-maven-plugin</artifactId>
@@ -51,23 +58,10 @@
                     </execution>
                 </executions>
             </plugin>
+
+            <!-- Failsafe for integration tests -->
             <plugin>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>${compiler-plugin.version}</version>
-                <configuration>
-                    <compilerArgs>
-                        <arg>-parameters</arg>
-                    </compilerArgs>
-                    <annotationProcessorPaths>
-                        <dependency>
-                            <groupId>de.prgrm.quarkus-neo4j-ogm</groupId>
-                            <artifactId>quarkus-neo4j-ogm</artifactId>
-                            <version>${project.version}</version>
-                        </dependency>
-                    </annotationProcessorPaths>
-                </configuration>
-            </plugin>
-            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <executions>
                     <execution>
@@ -78,10 +72,9 @@
                     </execution>
                 </executions>
                 <configuration>
+                    <skipITs>${skipITs}</skipITs>
                     <systemPropertyVariables>
-                        <native.image.path>${project.build.directory}/${project.build.finalName}-runner</native.image.path>
                         <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
-                        <maven.home>${maven.home}</maven.home>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>
@@ -89,6 +82,7 @@
     </build>
 
     <profiles>
+        <!-- Run native image tests (optional) -->
         <profile>
             <id>native-image</id>
             <activation>
@@ -96,6 +90,10 @@
                     <name>native</name>
                 </property>
             </activation>
+            <properties>
+                <skipITs>false</skipITs>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+            </properties>
             <build>
                 <plugins>
                     <plugin>
@@ -106,10 +104,6 @@
                     </plugin>
                 </plugins>
             </build>
-            <properties>
-                <skipITs>false</skipITs>
-                <quarkus.native.enabled>true</quarkus.native.enabled>
-            </properties>
         </profile>
     </profiles>
 </project>

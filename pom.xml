@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
@@ -7,11 +9,15 @@
         <artifactId>quarkiverse-parent</artifactId>
         <version>20</version>
     </parent>
+
     <groupId>de.prgrm.quarkus-neo4j-ogm</groupId>
     <artifactId>quarkus-neo4j-ogm-parent</artifactId>
     <version>1.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
-    <name>Quarkus Neo4j Ogm - Parent</name>
+
+    <name>Quarkus Neo4j OGM - Parent</name>
+    <description>Quarkus extension integrating Neo4j OGM</description>
+    <url>https://github.com/UnvirtualHH/quarkus-neo4j-ogm</url>
 
     <modules>
         <module>deployment</module>
@@ -22,18 +28,18 @@
         <connection>scm:git:git@github.com:UnvirtualHH/quarkus-neo4j-ogm.git</connection>
         <developerConnection>scm:git:git@github.com:UnvirtualHH/quarkus-neo4j-ogm.git</developerConnection>
         <url>https://github.com/UnvirtualHH/quarkus-neo4j-ogm</url>
-      <tag>v1.0.0</tag>
-  </scm>
+        <tag>HEAD</tag>
+    </scm>
 
     <developers>
         <developer>
             <id>fhell</id>
             <name>Florian Hell</name>
+            <email>fhell@prgrm.de</email>
         </developer>
     </developers>
 
     <properties>
-        <compiler-plugin.version>3.14.1</compiler-plugin.version>
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -57,24 +63,24 @@
     <build>
         <pluginManagement>
             <plugins>
+                <!-- Quarkus -->
                 <plugin>
                     <groupId>io.quarkus</groupId>
                     <artifactId>quarkus-maven-plugin</artifactId>
                     <version>${quarkus.version}</version>
                 </plugin>
+
+                <!-- Compiler -->
                 <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
-                    <version>${compiler-plugin.version}</version>
+                    <version>3.14.1</version>
                     <configuration>
                         <parameters>true</parameters>
                     </configuration>
                 </plugin>
-                <plugin>
-                    <groupId>io.quarkus</groupId>
-                    <artifactId>quarkus-config-doc-maven-plugin</artifactId>
-                    <version>${quarkus.version}</version>
-                </plugin>
 
+                <!-- Release + Deployment -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-release-plugin</artifactId>
@@ -83,18 +89,24 @@
                         <autoVersionSubmodules>true</autoVersionSubmodules>
                         <tagNameFormat>v@{project.version}</tagNameFormat>
                         <preparationGoals>clean verify</preparationGoals>
-                        <goals>deploy</goals>
+                        <goals>clean verify org.sonatype.central:central-publishing-maven-plugin:publish</goals>
                         <releaseProfiles>release</releaseProfiles>
                     </configuration>
                 </plugin>
 
+                <!-- Central publishing -->
                 <plugin>
                     <groupId>org.sonatype.central</groupId>
                     <artifactId>central-publishing-maven-plugin</artifactId>
                     <version>0.9.0</version>
                     <extensions>true</extensions>
+                    <configuration>
+                        <publishingServerId>central</publishingServerId>
+                        <autoPublish>true</autoPublish>
+                    </configuration>
                 </plugin>
 
+                <!-- Signing -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-gpg-plugin</artifactId>
@@ -109,7 +121,7 @@
                         </execution>
                     </executions>
                 </plugin>
-        </plugins>
+            </plugins>
         </pluginManagement>
     </build>
 
@@ -126,6 +138,7 @@
                 <module>docs</module>
             </modules>
         </profile>
+
         <profile>
             <id>it</id>
             <activation>
@@ -138,38 +151,9 @@
                 <module>integration-tests</module>
             </modules>
         </profile>
+
         <profile>
             <id>release</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-source-plugin</artifactId>
-                        <version>3.3.1</version>
-                        <executions>
-                            <execution>
-                                <id>attach-sources</id>
-                                <goals>
-                                    <goal>jar</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-javadoc-plugin</artifactId>
-                        <version>3.12.0</version>
-                        <executions>
-                            <execution>
-                                <id>attach-javadocs</id>
-                                <goals>
-                                    <goal>jar</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
         </profile>
     </profiles>
 </project>
