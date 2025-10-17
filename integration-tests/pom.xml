@@ -5,7 +5,7 @@
     <parent>
         <groupId>de.prgrm.quarkus-neo4j-ogm</groupId>
         <artifactId>quarkus-neo4j-ogm-parent</artifactId>
-        <version>1.0.0</version>
+        <version>1.0.1-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>quarkus-neo4j-ogm-integration-tests</artifactId>
