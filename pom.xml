@@ -9,7 +9,7 @@
     </parent>
     <groupId>de.prgrm.quarkus-neo4j-ogm</groupId>
     <artifactId>quarkus-neo4j-ogm-parent</artifactId>
-    <version>999-SNAPSHOT</version>
+    <version>1.0.0</version>
     <packaging>pom</packaging>
     <name>Quarkus Neo4j Ogm - Parent</name>
 
@@ -22,7 +22,8 @@
         <connection>scm:git:git@github.com:UnvirtualHH/quarkus-neo4j-ogm.git</connection>
         <developerConnection>scm:git:git@github.com:UnvirtualHH/quarkus-neo4j-ogm.git</developerConnection>
         <url>https://github.com/UnvirtualHH/quarkus-neo4j-ogm</url>
-    </scm>
+      <tag>v1.0.0</tag>
+  </scm>
 
     <developers>
         <developer>
