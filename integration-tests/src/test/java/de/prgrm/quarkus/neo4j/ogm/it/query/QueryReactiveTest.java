@@ -14,6 +14,7 @@ import org.neo4j.driver.Session;
 import de.prgrm.quarkus.neo4j.ogm.it.model.Book;
 import de.prgrm.quarkus.neo4j.ogm.it.model.BookBaseReactiveRepository;
 import io.quarkus.test.junit.QuarkusTest;
+import io.smallrye.mutiny.helpers.test.UniAssertSubscriber;
 
 @QuarkusTest
 public class QueryReactiveTest {
@@ -36,7 +37,9 @@ public class QueryReactiveTest {
         String authorId = createTestAuthorWithBooks();
 
         Book byTitle = bookRepository.findByTitle("Book 1")
-                .await().indefinitely();
+                .subscribe().withSubscriber(UniAssertSubscriber.create())
+                .awaitItem().assertCompleted()
+                .getItem();
 
         assertNotNull(byTitle);
     }
@@ -46,7 +49,9 @@ public class QueryReactiveTest {
         String authorId = createTestAuthorWithBooks();
 
         Book book = bookRepository.touchAndReturn("Book 1")
-                .await().indefinitely();
+                .subscribe().withSubscriber(UniAssertSubscriber.create())
+                .awaitItem().assertCompleted()
+                .getItem();
 
         assertNotNull(book);
     }

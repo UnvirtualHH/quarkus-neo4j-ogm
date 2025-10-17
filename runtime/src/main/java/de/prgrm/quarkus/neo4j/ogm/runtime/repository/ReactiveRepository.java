@@ -24,7 +24,6 @@ import io.smallrye.mutiny.Uni;
 
 /**
  * Reactive repository base class for Neo4j OGM.
- * Uses ReactiveRelationVisitor (with explicit VisitorContext) for safe traversal.
  */
 public abstract class ReactiveRepository<T> {
 
@@ -35,9 +34,7 @@ public abstract class ReactiveRepository<T> {
     protected final ReactiveRelationLoader<T> relationLoader;
     protected final ReactiveRelationVisitor relationVisitor;
 
-    /**
-     * Context is created fresh per repository operation.
-     */
+    /** Shared visitor context across traversal */
     protected ReactiveRelationVisitor.VisitorContext visitorContext;
 
     public ReactiveRepository() {
@@ -52,28 +49,18 @@ public abstract class ReactiveRepository<T> {
 
     public ReactiveRepository(Driver driver, String label, EntityMapper<T> entityMapper,
             ReactiveRepositoryRegistry reactiveRegistry) {
-        this.driver = driver;
-        this.label = label;
-        this.entityMapper = entityMapper;
-        this.reactiveRegistry = reactiveRegistry;
-        this.relationLoader = null;
-        this.relationVisitor = null;
-        this.visitorContext = null;
+        this(driver, label, entityMapper, reactiveRegistry, null, null);
     }
 
     public ReactiveRepository(Driver driver, String label, EntityMapper<T> entityMapper,
-            ReactiveRepositoryRegistry reactiveRegistry, ReactiveRelationVisitor relationVisitor) {
-        this.driver = driver;
-        this.label = label;
-        this.entityMapper = entityMapper;
-        this.reactiveRegistry = reactiveRegistry;
-        this.relationLoader = null;
-        this.relationVisitor = relationVisitor;
-        this.visitorContext = null;
+            ReactiveRepositoryRegistry reactiveRegistry,
+            ReactiveRelationVisitor relationVisitor) {
+        this(driver, label, entityMapper, reactiveRegistry, null, relationVisitor);
     }
 
     public ReactiveRepository(Driver driver, String label, EntityMapper<T> entityMapper,
-            ReactiveRepositoryRegistry reactiveRegistry, ReactiveRelationLoader<T> relationLoader,
+            ReactiveRepositoryRegistry reactiveRegistry,
+            ReactiveRelationLoader<T> relationLoader,
             ReactiveRelationVisitor relationVisitor) {
         this.driver = driver;
         this.label = label;
@@ -84,15 +71,36 @@ public abstract class ReactiveRepository<T> {
         this.visitorContext = null;
     }
 
-    private static Function<ReactiveSession, Uni<Void>> closeSession() {
-        return session -> Uni.createFrom().publisher(session.close())
-                .replaceWithVoid()
-                .onFailure().invoke(throwable -> {
-                    System.err.println("Failed to close Neo4j session: " + throwable.getMessage());
-                });
+    protected abstract Class<T> getEntityType();
+
+    // ----------------------------------------------------------
+    // Visitor context handling
+    // ----------------------------------------------------------
+
+    /**
+     * Create a new visitor context if none exists yet.
+     * Does NOT overwrite an existing one to allow propagation.
+     */
+    private void resetVisitor() {
+        if (relationVisitor != null && this.visitorContext == null) {
+            this.visitorContext = relationVisitor.newContext();
+            // Debug log (optional)
+            // System.out.println("🌀 Created new VisitorContext@" + System.identityHashCode(visitorContext));
+        }
     }
 
-    protected abstract Class<T> getEntityType();
+    /** Allow external components (RelationLoader) to pass a shared context. */
+    public void setVisitorContext(ReactiveRelationVisitor.VisitorContext ctx) {
+        this.visitorContext = ctx;
+    }
+
+    public ReactiveRelationVisitor.VisitorStats getVisitorStats() {
+        return visitorContext != null ? visitorContext.getStats() : null;
+    }
+
+    public List<ReactiveRelationVisitor.TraversalStep> getTraversalPath() {
+        return visitorContext != null ? visitorContext.traversalPath : List.of();
+    }
 
     // ----------------------------------------------------------
     // Public Repository API
@@ -179,10 +187,8 @@ public abstract class ReactiveRepository<T> {
         resetVisitor();
 
         String idProp = entityMapper.getNodeIdPropertyName();
-
         String cypher = "MERGE (n:" + label + " {" + idProp + ": $props." + idProp + "}) " +
-                "SET n += $props " +
-                "RETURN n";
+                "SET n += $props RETURN n";
 
         return runWriteQuerySingle(cypher, Map.of("props", entity.getProperties()))
                 .flatMap(saved -> persistRelationships(
@@ -242,44 +248,6 @@ public abstract class ReactiveRepository<T> {
                 .onItem().transformToUniAndMerge(this::loadRelations);
     }
 
-    public <R> Uni<R> queryScalar(String cypher, Function<Record, R> mapper) {
-        return queryScalar(cypher, Map.of(), mapper);
-    }
-
-    public <R> Uni<R> queryScalar(String cypher,
-            Map<String, Object> parameters,
-            Function<Record, R> mapper) {
-        return runScalarReadQuery(cypher, parameters, mapper);
-    }
-
-    public Uni<Paged<T>> queryPaged(
-            String baseCypher,
-            Map<String, Object> params,
-            Pageable pageable,
-            Sortable sortable) {
-        resetVisitor();
-        String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
-        String pagedCypher = baseCypher + " RETURN n " + sortClause + " SKIP $skip LIMIT $limit";
-        Map<String, Object> allParams = new java.util.HashMap<>(params);
-        allParams.put("skip", pageable.page() * pageable.size());
-        allParams.put("limit", pageable.size());
-
-        Uni<List<T>> contentUni = runReadQuery(pagedCypher, allParams)
-                .onItem().transformToUniAndMerge(this::loadRelations)
-                .collect().asList();
-
-        String countCypher = baseCypher + " RETURN count(n) AS count";
-        Uni<Long> countUni = runScalarReadQuery(countCypher, params, r -> r.get("count").asLong());
-
-        return Uni.combine().all().unis(contentUni, countUni)
-                .asTuple()
-                .map(tuple -> new Paged<>(
-                        tuple.getItem1(),
-                        tuple.getItem2(),
-                        pageable.page(),
-                        pageable.size()));
-    }
-
     public Uni<T> querySingle(String cypher) {
         return querySingle(cypher, Map.of());
     }
@@ -288,6 +256,16 @@ public abstract class ReactiveRepository<T> {
         resetVisitor();
         return runReadQuerySingle(cypher, params)
                 .flatMap(this::loadRelations);
+    }
+
+    public <R> Uni<R> queryScalar(String cypher, Function<Record, R> mapper) {
+        return queryScalar(cypher, Map.of(), mapper);
+    }
+
+    public <R> Uni<R> queryScalar(String cypher,
+            Map<String, Object> parameters,
+            Function<Record, R> mapper) {
+        return runScalarReadQuery(cypher, parameters, mapper);
     }
 
     // ----------------------------------------------------------
@@ -327,12 +305,15 @@ public abstract class ReactiveRepository<T> {
                         return Uni.createFrom().item(entity);
                     }
                     return relationVisitor.markVisited(entity, visitorContext)
-                            .replaceWith(() -> {
+                            .flatMap(ignore -> {
                                 Class<?> entityClass = entity.getClass();
                                 ReactiveRepository<Object> repo = (ReactiveRepository<Object>) reactiveRegistry
                                         .getReactiveRepository(entityClass);
                                 if (repo != null && repo.getRelationLoader() != null) {
-                                    return repo.getRelationLoader().loadRelations(entity, currentDepth, repo.visitorContext);
+                                    repo.setVisitorContext(visitorContext); // ✅ share context
+                                    ReactiveRelationLoader<Object> loader = (ReactiveRelationLoader<Object>) repo
+                                            .getRelationLoader();
+                                    return loader.loadRelations(entity, currentDepth, visitorContext);
                                 }
                                 return Uni.createFrom().item(entity);
                             });
@@ -340,26 +321,15 @@ public abstract class ReactiveRepository<T> {
     }
 
     // ----------------------------------------------------------
-    // Visitor & Monitoring
+    // Internals (query execution)
     // ----------------------------------------------------------
 
-    private void resetVisitor() {
-        if (relationVisitor != null) {
-            this.visitorContext = relationVisitor.newContext();
-        }
+    private static Function<ReactiveSession, Uni<Void>> closeSession() {
+        return session -> Uni.createFrom().publisher(session.close())
+                .replaceWithVoid()
+                .onFailure()
+                .invoke(throwable -> System.err.println("Failed to close Neo4j session: " + throwable.getMessage()));
     }
-
-    public ReactiveRelationVisitor.VisitorStats getVisitorStats() {
-        return visitorContext != null ? visitorContext.getStats() : null;
-    }
-
-    public List<ReactiveRelationVisitor.TraversalStep> getTraversalPath() {
-        return visitorContext != null ? visitorContext.traversalPath : List.of();
-    }
-
-    // ----------------------------------------------------------
-    // Internals: query execution with alias resolution
-    // ----------------------------------------------------------
 
     private Multi<T> runReadQuery(String cypher, Map<String, Object> params) {
         return runQueryInternal(cypher, params, true)
@@ -373,7 +343,9 @@ public abstract class ReactiveRepository<T> {
     private Uni<T> runWriteQuerySingle(String cypher, Map<String, Object> params) {
         return runQueryInternal(cypher, params, false)
                 .collect().asList()
-                .map(records -> records.isEmpty() ? null : entityMapper.map(records.get(0), resolveAlias(records.get(0))));
+                .map(records -> records.isEmpty()
+                        ? null
+                        : entityMapper.map(records.get(0), resolveAlias(records.get(0))));
     }
 
     private Uni<Void> runWriteQueryVoid(String cypher, Map<String, Object> params) {
@@ -387,7 +359,7 @@ public abstract class ReactiveRepository<T> {
                 }))
                 .withFinalizer(closeSession())
                 .toUni()
-                .onFailure().transform(throwable -> new RepositoryException("Failed to execute write query", throwable));
+                .onFailure().transform(t -> new RepositoryException("Failed to execute write query", t));
     }
 
     private <R> Uni<R> runScalarReadQuery(String cypher, Map<String, Object> params, Function<Record, R> mapper) {
@@ -401,7 +373,7 @@ public abstract class ReactiveRepository<T> {
                 }))
                 .withFinalizer(closeSession())
                 .toUni()
-                .onFailure().transform(throwable -> new RepositoryException("Failed to execute scalar query", throwable));
+                .onFailure().transform(t -> new RepositoryException("Failed to execute scalar query", t));
     }
 
     private Multi<Record> runQueryInternal(String cypher, Map<String, Object> params, boolean readOnly) {
@@ -417,7 +389,7 @@ public abstract class ReactiveRepository<T> {
                     }
                 })
                 .withFinalizer(closeSession())
-                .onFailure().transform(throwable -> new RepositoryException("Failed to execute query", throwable));
+                .onFailure().transform(t -> new RepositoryException("Failed to execute query", t));
     }
 
     private Uni<Void> persistRelationships(String label, Object fromId, List<RelationshipData> relationships) {
@@ -434,6 +406,9 @@ public abstract class ReactiveRepository<T> {
                         ReactiveRepository<Object> targetRepo = (ReactiveRepository<Object>) reactiveRegistry
                                 .getReactiveRepository(target.getEntityType());
 
+                        if (targetRepo != null)
+                            targetRepo.setVisitorContext(visitorContext); // ✅ share context
+
                         return targetRepo.createInternal(target)
                                 .map(saved -> targetRepo.getEntityMapper().getNodeId(saved))
                                 .invoke(rel::setTargetId)
@@ -448,16 +423,13 @@ public abstract class ReactiveRepository<T> {
                 .flatMap(ignore -> Multi.createFrom().iterable(relationships)
                         .onItem().transformToUniAndMerge(rel -> {
                             Object toId = rel.getTargetId();
-                            if (toId == null) {
+                            if (toId == null)
                                 return Uni.createFrom().voidItem();
-                            }
                             String query = switch (rel.getDirection()) {
-                                case OUTGOING ->
-                                    "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)-[r:" + rel.getType()
-                                            + "]->(b)";
-                                case INCOMING ->
-                                    "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)<-[r:" + rel.getType()
-                                            + "]-(b)";
+                                case OUTGOING -> "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)-[r:" +
+                                        rel.getType() + "]->(b)";
+                                case INCOMING -> "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)<-[r:" +
+                                        rel.getType() + "]-(b)";
                                 default ->
                                     throw new UnsupportedOperationException("Unsupported direction: " + rel.getDirection());
                             };

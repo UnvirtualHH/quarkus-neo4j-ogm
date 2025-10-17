@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.UUID;
 
 import de.prgrm.quarkus.neo4j.ogm.runtime.enums.Direction;
+import de.prgrm.quarkus.neo4j.ogm.runtime.enums.RelationshipMode;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.*;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.GenerateRepository.RepositoryType;
 
@@ -16,7 +17,7 @@ public class Author {
     private UUID id;
     private String name;
 
-    @Relationship(type = "WROTE", direction = Direction.OUTGOING)
+    @Relationship(type = "WROTE", direction = Direction.OUTGOING, mode = RelationshipMode.FETCH_ONLY)
     private List<Book> books;
 
     public UUID getId() {
