@@ -52,7 +52,10 @@ public class ReactiveRepositoryGenerator {
                 .addParameter(ClassName.get(packageName, mapperClassName), "entityMapper")
                 .addParameter(
                         ClassName.get("de.prgrm.quarkus.neo4j.ogm.runtime.repository", "ReactiveRepositoryRegistry"),
-                        "reactiveRegistry");
+                        "reactiveRegistry")
+                .addParameter(
+                        ClassName.get("de.prgrm.quarkus.neo4j.ogm.runtime.tx", "ReactiveTransactionManager"),
+                        "txManager");
 
         if (hasRelationships) {
             String loaderClassName = entityType.getSimpleName() + "ReactiveRelationLoader";
@@ -65,10 +68,10 @@ public class ReactiveRepositoryGenerator {
 
         if (hasRelationships) {
             constructorBuilder.addStatement(
-                    "super(driver, $S, entityMapper, reactiveRegistry, relationLoader, relationVisitor)", label);
+                    "super(driver, $S, entityMapper, reactiveRegistry, relationLoader, relationVisitor, txManager)", label);
         } else {
             constructorBuilder.addStatement(
-                    "super(driver, $S, entityMapper, reactiveRegistry, relationVisitor)", label);
+                    "super(driver, $S, entityMapper, reactiveRegistry, relationVisitor, txManager)", label);
         }
 
         MethodSpec constructor = constructorBuilder.build();
