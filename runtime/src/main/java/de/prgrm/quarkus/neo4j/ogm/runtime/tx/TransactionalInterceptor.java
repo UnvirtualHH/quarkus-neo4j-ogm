@@ -4,10 +4,16 @@ import jakarta.annotation.Priority;
 import jakarta.inject.Inject;
 import jakarta.interceptor.*;
 
+import org.jboss.logging.Logger;
+import org.neo4j.driver.exceptions.Neo4jException;
+
 @Interceptor
-@Transactional
+@de.prgrm.quarkus.neo4j.ogm.runtime.tx.Transactional
+@jakarta.transaction.Transactional
 @Priority(Interceptor.Priority.APPLICATION + 10)
 public class TransactionalInterceptor {
+
+    private static final Logger LOG = Logger.getLogger(TransactionalInterceptor.class);
 
     @Inject
     TransactionManager txManager;
@@ -25,10 +31,15 @@ public class TransactionalInterceptor {
                 txManager.commitAndClose();
             }
             return result;
-        } catch (Exception e) {
-            if (newTx) {
+        } catch (Neo4jException e) {
+            LOG.errorf("Neo4j exception in transactional method %s: %s",
+                    ctx.getMethod().getName(), e.getMessage());
+            if (newTx)
                 txManager.rollbackAndClose();
-            }
+            throw e;
+        } catch (Exception e) {
+            if (newTx)
+                txManager.rollbackAndClose();
             throw e;
         }
     }

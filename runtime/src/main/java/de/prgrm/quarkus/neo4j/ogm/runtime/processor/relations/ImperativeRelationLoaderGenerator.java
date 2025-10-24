@@ -148,14 +148,15 @@ public class ImperativeRelationLoaderGenerator extends AbstractRelationLoaderGen
             builder.addStatement("String query = $S", query);
 
             if (isList) {
-                builder.addStatement("var results = repository.query(query, $T.of($S, id))", Map.class, "id");
+                builder.addStatement("var results = repository.query(query, $T.of($S, id.toString()))", Map.class, "id");
                 builder.addStatement("if (entity.$L() == null) entity.$L(new $T<>())", getter, setter, ArrayList.class);
                 builder.addStatement("entity.$L().addAll(results)", getter);
                 builder.beginControlFlow("for (var item : entity.$L())", getter);
                 builder.addStatement("loadRelationRecursively(item, currentDepth + 1)");
                 builder.endControlFlow();
             } else {
-                builder.addStatement("var result = repository.query(query, $T.of($S, id)).stream().findFirst().orElse(null)",
+                builder.addStatement(
+                        "var result = repository.query(query, $T.of($S, id.toString())).stream().findFirst().orElse(null)",
                         Map.class, "id");
                 builder.addStatement("entity.$L(result)", setter);
                 builder.beginControlFlow("if (result != null)");

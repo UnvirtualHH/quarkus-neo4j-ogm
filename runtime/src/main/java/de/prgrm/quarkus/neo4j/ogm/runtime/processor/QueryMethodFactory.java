@@ -44,7 +44,10 @@ final class QueryMethodFactory {
             ProcessingEnvironment env) {
 
         String methodName = q.name();
-        String cypherQuery = q.cypher();
+        String cypherQuery = q.cypher()
+                .stripIndent()
+                .trim();
+
         ReturnType returnType = q.returnType();
 
         boolean transactional = false;
@@ -65,7 +68,7 @@ final class QueryMethodFactory {
 
         MethodSpec.Builder mb = MethodSpec.methodBuilder(methodName)
                 .addModifiers(Modifier.PUBLIC)
-                .addStatement("String query = $S", cypherQuery);
+                .addStatement("String query = $L", toTextBlock(cypherQuery));
 
         for (String p : paramNames) {
             TypeName resolved = explicitTypes.getOrDefault(p, resolveParamType(entityType, p, env));
@@ -86,6 +89,19 @@ final class QueryMethodFactory {
             }
         } else {
             repoCall = (returnType == ReturnType.LIST) ? "executeQuery" : "executeReturning";
+        }
+
+        if (returnType == ReturnType.VOID) {
+            return buildWriteOnlyMethod(reactive, mb, "executeQuery", paramNames, mapArgs);
+        }
+
+        if (returnType == ReturnType.BOOLEAN
+                || returnType == ReturnType.LONG
+                || returnType == ReturnType.STRING
+                || returnType == ReturnType.SCALAR) {
+
+            repoCall = "queryScalar";
+            return buildScalarMethod(reactive, mb, repoCall, returnType, paramNames, mapArgs);
         }
 
         if (returnType == ReturnType.LIST) {
@@ -144,6 +160,49 @@ final class QueryMethodFactory {
                 mb.addStatement("$L(query, $T.of(" + mapArgs + "))", repoCall, mapClass);
             }
         }
+        return mb.build();
+    }
+
+    private static MethodSpec buildScalarMethod(
+            boolean reactive,
+            MethodSpec.Builder mb,
+            String repoCall,
+            ReturnType returnType,
+            List<String> paramNames,
+            CodeBlock mapArgs) {
+
+        TypeName scalarType;
+
+        switch (returnType) {
+            case BOOLEAN -> scalarType = TypeName.BOOLEAN;
+            case LONG -> scalarType = TypeName.LONG;
+            case STRING -> scalarType = ClassName.get(String.class);
+            default -> scalarType = TypeName.get(Object.class);
+        }
+
+        if (reactive) {
+            mb.returns(ParameterizedTypeName.get(
+                    ClassName.get("io.smallrye.mutiny", "Uni"),
+                    scalarType.box()));
+        } else {
+            mb.returns(scalarType);
+        }
+
+        ClassName mapClass = ClassName.get("java.util", "Map");
+
+        String mapperLambda = switch (returnType) {
+            case BOOLEAN -> "r -> r.get(0).asBoolean()";
+            case LONG -> "r -> r.get(0).asLong()";
+            case STRING -> "r -> r.get(0).asString()";
+            default -> "r -> r.get(0).asObject()";
+        };
+
+        if (paramNames.isEmpty()) {
+            mb.addStatement("return $L(query, $T.of(), $L)", repoCall, mapClass, mapperLambda);
+        } else {
+            mb.addStatement("return $L(query, $T.of(" + mapArgs + "), $L)", repoCall, mapClass, mapperLambda);
+        }
+
         return mb.build();
     }
 
@@ -237,5 +296,10 @@ final class QueryMethodFactory {
             params.add(matcher.group(1));
         }
         return params;
+    }
+
+    private static String toTextBlock(String query) {
+        String clean = query.stripIndent().trim();
+        return "\"\"\"\n" + clean + "\"\"\"";
     }
 }

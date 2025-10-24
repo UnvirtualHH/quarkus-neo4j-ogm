@@ -21,6 +21,10 @@ import de.prgrm.quarkus.neo4j.ogm.runtime.enums.RelationshipMode;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.*;
 import de.prgrm.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil;
 
+/**
+ * Code generator for Neo4j entity mappers.
+ * Generates null-safe property mappings (with null checks) and supports primitive types.
+ */
 public class MapperGenerator {
 
     private final FieldMappingStrategy strategy;
@@ -80,6 +84,10 @@ public class MapperGenerator {
                 rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
     }
 
+    /**
+     * Generates the `map()` method for a given entity.
+     * Adds null-checks before reading any property.
+     */
     private MethodSpec generateMapMethod(TypeElement entityType, ProcessingEnvironment env) {
         MethodSpec.Builder builder = MethodSpec.methodBuilder("map")
                 .addModifiers(Modifier.PUBLIC)
@@ -100,15 +108,22 @@ public class MapperGenerator {
         return builder.build();
     }
 
+    /**
+     * Generates the mapping code for one field, wrapped in a null check.
+     */
     private void generateMapStatement(VariableElement field, MethodSpec.Builder builder, ProcessingEnvironment env) {
         Optional<TypeHandler> handler = TypeHandlerRegistry.findHandler(field, env.getTypeUtils(), env.getElementUtils());
+        String fieldName = field.getSimpleName().toString();
+
         if (handler.isPresent()) {
+            builder.beginControlFlow("if (nodeValue.get($S) != null && !nodeValue.get($S).isNull())", fieldName, fieldName);
             builder.addCode(handler.get().generateSetterCode(field, "instance", "nodeValue"));
+            builder.endControlFlow();
         } else {
             env.getMessager().printMessage(
                     Diagnostic.Kind.WARNING,
                     String.format(
-                            "No TypeHandler found for field '%s' of type '%s' in entity '%s'. Falling back to skipping or generic handling.",
+                            "No TypeHandler found for field '%s' of type '%s' in entity '%s'. Skipping.",
                             field.getSimpleName(),
                             field.asType(),
                             field.getEnclosingElement().getSimpleName()),
@@ -116,6 +131,9 @@ public class MapperGenerator {
         }
     }
 
+    /**
+     * Generates the `toDb()` method to map an entity to Neo4j properties.
+     */
     private MethodSpec generateToDbMethod(TypeElement entityType, ProcessingEnvironment env) {
         MethodSpec.Builder builder = MethodSpec.methodBuilder("toDb")
                 .addModifiers(Modifier.PUBLIC)
@@ -131,21 +149,18 @@ public class MapperGenerator {
                                 ClassName.get("de.prgrm.quarkus.neo4j.ogm.runtime.mapping", "RelationshipData")),
                         ClassName.get("java.util", "ArrayList"));
 
-        // Properties
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             if (!shouldIncludeField(field, env))
                 continue;
 
-            Optional<TypeHandler> handler = TypeHandlerRegistry.findHandler(
-                    field, env.getTypeUtils(), env.getElementUtils());
-
+            Optional<TypeHandler> handler = TypeHandlerRegistry.findHandler(field, env.getTypeUtils(), env.getElementUtils());
             if (handler.isPresent()) {
                 builder.addCode(handler.get().generateToDbCode(field, "entity", "properties"));
             } else {
                 env.getMessager().printMessage(
                         Diagnostic.Kind.WARNING,
                         String.format(
-                                "No TypeHandler found for field '%s' of type '%s' in entity '%s'. Falling back to skipping or generic handling.",
+                                "No TypeHandler found for field '%s' of type '%s' in entity '%s'.",
                                 field.getSimpleName(),
                                 field.asType(),
                                 entityType.getSimpleName()),
@@ -153,7 +168,7 @@ public class MapperGenerator {
             }
         }
 
-        // Relationships (persist only)
+        // Relationships
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             Relationship relationship = field.getAnnotation(Relationship.class);
             if (relationship != null && shouldPersistRelationship(relationship)) {
@@ -200,7 +215,6 @@ public class MapperGenerator {
                                     direction.name())
                             .endControlFlow();
                 }
-
             }
         }
 

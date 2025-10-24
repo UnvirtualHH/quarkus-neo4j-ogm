@@ -2,5 +2,10 @@ package de.prgrm.quarkus.neo4j.ogm.runtime.enums;
 
 public enum ReturnType {
     SINGLE,
-    LIST
+    LIST,
+    BOOLEAN,
+    LONG,
+    STRING,
+    SCALAR,
+    VOID
 }
