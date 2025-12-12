@@ -1,20 +1,19 @@
 package de.prgrm.quarkus.neo4j.ogm.runtime.repository;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
 import org.neo4j.driver.*;
 import org.neo4j.driver.Record;
 
+import de.prgrm.quarkus.neo4j.ogm.runtime.enums.RelationshipMode;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.EntityMapper;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.EntityWithRelations;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.RelationLoader;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.RelationshipData;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.errors.Neo4jExceptionTranslator;
+import de.prgrm.quarkus.neo4j.ogm.runtime.repository.errors.NotFoundRepositoryException;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Filter;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Pageable;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Paged;
@@ -83,57 +82,48 @@ public abstract class Repository<T> {
     // ========================= Transaction Helpers (mit Übersetzung) =========================
 
     private <R> R inWriteTx(Function<Transaction, R> work) {
-        if (txManager != null && txManager.isTransactionActive()) {
-            try {
+        try {
+            if (txManager != null && txManager.isTransactionActive()) {
                 return work.apply(txManager.getOrCreateTransaction());
-            } catch (Exception e) {
-                throw Neo4jExceptionTranslator.translate(e, "write-tx (managed)");
             }
-        }
-        try (Session session = driver.session()) {
-            try (Transaction tx = session.beginTransaction()) {
+            try (Session session = driver.session();
+                    Transaction tx = session.beginTransaction()) {
                 R result = work.apply(tx);
                 tx.commit();
                 return result;
-            } catch (Exception e) {
-                throw Neo4jExceptionTranslator.translate(e, "write-tx");
             }
+        } catch (Exception e) {
+            throw Neo4jExceptionTranslator.translate(e, "write-tx");
         }
     }
 
     private void inWriteTxVoid(Consumer<Transaction> work) {
-        if (txManager != null && txManager.isTransactionActive()) {
-            try {
+        try {
+            if (txManager != null && txManager.isTransactionActive()) {
                 work.accept(txManager.getOrCreateTransaction());
                 return;
-            } catch (Exception e) {
-                throw Neo4jExceptionTranslator.translate(e, "write-tx (managed)");
             }
-        }
-        try (Session session = driver.session()) {
-            try (Transaction tx = session.beginTransaction()) {
+            try (Session session = driver.session();
+                    Transaction tx = session.beginTransaction()) {
                 work.accept(tx);
                 tx.commit();
-            } catch (Exception e) {
-                throw Neo4jExceptionTranslator.translate(e, "write-tx");
             }
+        } catch (Exception e) {
+            throw Neo4jExceptionTranslator.translate(e, "write-tx");
         }
     }
 
     private <R> R inReadTx(Function<Transaction, R> work) {
-        if (txManager != null && txManager.isTransactionActive()) {
-            try {
+        try {
+            if (txManager != null && txManager.isTransactionActive()) {
                 return work.apply(txManager.getOrCreateTransaction());
-            } catch (Exception e) {
-                throw Neo4jExceptionTranslator.translate(e, "read-tx (managed)");
             }
-        }
-        try (Session session = driver.session()) {
-            try (Transaction tx = session.beginTransaction()) {
+            try (Session session = driver.session();
+                    Transaction tx = session.beginTransaction()) {
                 return work.apply(tx);
-            } catch (Exception e) {
-                throw Neo4jExceptionTranslator.translate(e, "read-tx");
             }
+        } catch (Exception e) {
+            throw Neo4jExceptionTranslator.translate(e, "read-tx");
         }
     }
 
@@ -142,36 +132,43 @@ public abstract class Repository<T> {
     public T findById(Object id) {
         try {
             return inReadTx(tx -> {
-                var result = tx.run("MATCH (n:" + label + " {id: $id}) RETURN n AS node",
-                        Values.parameters("id", id));
-                Record rec = result.single();
-                String alias = resolveAlias(rec);
-                T entity = entityMapper.map(rec, alias);
+                var result = tx.run(
+                        "MATCH (n:" + label + " {id: $id}) RETURN n AS node",
+                        Values.parameters("id", id.toString()));
+
+                if (!result.hasNext()) {
+                    throw new NotFoundRepositoryException(
+                            getEntityType().getSimpleName() + " not found for id=" + id);
+                }
+
+                Record rec = result.next();
+                T entity = entityMapper.map(rec, resolveAlias(rec));
                 loadRelations(entity, 0);
                 return entity;
             });
         } finally {
-            if (relationVisitor != null)
-                relationVisitor.reset();
+            resetVisitor();
         }
     }
 
     public Optional<T> findByIdOptional(Object id) {
         try {
             return inReadTx(tx -> {
-                var result = tx.run("MATCH (n:" + label + " {id: $id}) RETURN n AS node",
-                        Values.parameters("id", id));
-                if (!result.hasNext())
+                var result = tx.run(
+                        "MATCH (n:" + label + " {id: $id}) RETURN n AS node",
+                        Values.parameters("id", id.toString()));
+
+                if (!result.hasNext()) {
                     return Optional.empty();
-                Record rec = result.single();
-                String alias = resolveAlias(rec);
-                T entity = entityMapper.map(rec, alias);
+                }
+
+                Record rec = result.next();
+                T entity = entityMapper.map(rec, resolveAlias(rec));
                 loadRelations(entity, 0);
                 return Optional.of(entity);
             });
         } finally {
-            if (relationVisitor != null)
-                relationVisitor.reset();
+            resetVisitor();
         }
     }
 
@@ -240,7 +237,7 @@ public abstract class Repository<T> {
         try {
             return inReadTx(tx -> {
                 var result = tx.run("MATCH (n:" + label + ") RETURN count(n) AS count");
-                return result.single().get("count").asLong();
+                return result.hasNext() ? result.next().get("count").asLong() : 0L;
             });
         } finally {
             if (relationVisitor != null)
@@ -260,7 +257,7 @@ public abstract class Repository<T> {
                 String alias = resolveAlias(rec);
                 T saved = entityMapper.map(rec, alias);
 
-                persistRelationships(tx, label, id, data.getRelationships());
+                persistRelationships(tx, label, id, data.getRelationships(), new HashSet<>());
                 return saved;
             });
         } finally {
@@ -270,80 +267,106 @@ public abstract class Repository<T> {
     }
 
     private T createInternal(EntityWithRelations entity) {
+        return createInternal(entity, new HashSet<>());
+    }
+
+    private T createInternal(EntityWithRelations entity, Set<String> visited) {
         return inWriteTx(tx -> {
             Map<String, Object> props = entity.getProperties();
             String idProp = entityMapper.getNodeIdPropertyName();
             Object id = props.get(idProp);
+
             if (id == null) {
-                throw new IllegalStateException("No @NodeId property in properties map!");
+                throw new IllegalStateException("No @NodeId value present");
             }
 
-            StringBuilder setClause = new StringBuilder();
-            props.keySet().stream()
-                    .filter(k -> !k.equals(idProp))
-                    .forEach(k -> setClause.append("n.").append(k).append(" = $").append(k).append(", "));
+            String cypher = "MERGE (n:" + label + " {" + idProp + ": $" + idProp + "}) " +
+                    "SET n += $props " +
+                    "RETURN n AS node";
 
-            String cypher = "MERGE (n:" + label + " {" + idProp + ": $" + idProp + "}) ";
-            if (!setClause.isEmpty()) {
-                cypher += "SET " + setClause.substring(0, setClause.length() - 2) + " ";
+            Map<String, Object> params = new HashMap<>();
+            params.put(idProp, id);
+            params.put("props", props);
+
+            var result = tx.run(cypher, params);
+
+            if (!result.hasNext()) {
+                throw new IllegalStateException(
+                        "MERGE did not return a node for "
+                                + getEntityType().getSimpleName()
+                                + " with id=" + id);
             }
-            cypher += "RETURN n AS node";
 
-            var result = tx.run(cypher, props);
-            Record rec = result.single();
-            String alias = resolveAlias(rec);
-            T saved = entityMapper.map(rec, alias);
+            Record rec = result.next();
+            T saved = entityMapper.map(rec, resolveAlias(rec));
 
-            persistRelationships(tx, label, id, entity.getRelationships());
+            persistRelationships(tx, label, id, entity.getRelationships(), visited);
             return saved;
         });
     }
 
     public T update(T entity) {
-        try {
-            Object id = entityMapper.getNodeId(entity);
-            if (id == null)
-                throw new IllegalArgumentException("Entity ID cannot be null");
+        Object id = entityMapper.getNodeId(entity);
+        if (id == null) {
+            throw new IllegalArgumentException("Entity ID must not be null");
+        }
 
+        try {
             return inWriteTx(tx -> {
                 EntityWithRelations data = entityMapper.toDb(entity);
 
-                var result = tx.run("MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
-                        Values.parameters("id", id, "props", data.getProperties()));
-                Record rec = result.single();
-                String alias = resolveAlias(rec);
-                T updated = entityMapper.map(rec, alias);
+                var result = tx.run(
+                        "MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
+                        Values.parameters("id", id.toString(), "props", data.getProperties()));
 
-                persistRelationships(tx, label, id, data.getRelationships());
+                if (!result.hasNext()) {
+                    throw new NotFoundRepositoryException(
+                            getEntityType().getSimpleName() + " not found for id=" + id);
+                }
+
+                Record rec = result.next();
+                T updated = entityMapper.map(rec, resolveAlias(rec));
+                persistRelationships(tx, label, id, data.getRelationships(), new HashSet<>());
                 return updated;
             });
         } finally {
-            if (relationVisitor != null)
-                relationVisitor.reset();
+            resetVisitor();
         }
     }
 
     public T merge(T entity) {
-        try {
-            Object id = entityMapper.getNodeId(entity);
-            if (id == null)
-                throw new IllegalArgumentException("Entity ID cannot be null");
+        Object id = entityMapper.getNodeId(entity);
+        if (id == null) {
+            throw new IllegalArgumentException("Entity ID cannot be null");
+        }
 
+        try {
             return inWriteTx(tx -> {
                 EntityWithRelations data = entityMapper.toDb(entity);
 
-                var result = tx.run("MERGE (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
-                        Values.parameters("id", id, "props", data.getProperties()));
-                Record rec = result.single();
-                String alias = resolveAlias(rec);
-                T merged = entityMapper.map(rec, alias);
+                var result = tx.run(
+                        "MERGE (n:" + label + " {id: $id}) " +
+                                "SET n += $props " +
+                                "RETURN n AS node",
+                        Values.parameters(
+                                "id", id.toString(),
+                                "props", data.getProperties()));
 
-                persistRelationships(tx, label, id, data.getRelationships());
+                if (!result.hasNext()) {
+                    throw new IllegalStateException(
+                            "MERGE did not return a node for "
+                                    + getEntityType().getSimpleName()
+                                    + " with id=" + id);
+                }
+
+                Record rec = result.next();
+                T merged = entityMapper.map(rec, resolveAlias(rec));
+
+                persistRelationships(tx, label, id, data.getRelationships(), new HashSet<>());
                 return merged;
             });
         } finally {
-            if (relationVisitor != null)
-                relationVisitor.reset();
+            resetVisitor();
         }
     }
 
@@ -509,8 +532,8 @@ public abstract class Repository<T> {
             return inReadTx(tx -> {
                 var result = tx.run(cypher, Values.value(parameters));
                 if (!result.hasNext())
-                    return null; // bestehendes Verhalten
-                Record rec = result.single();
+                    return null;
+                Record rec = result.next();
                 String alias = resolveAlias(rec);
                 T entity = entityMapper.map(rec, alias);
                 loadRelations(entity, 0);
@@ -532,7 +555,7 @@ public abstract class Repository<T> {
                 var result = tx.run(cypher, Values.value(parameters));
                 if (!result.hasNext())
                     return Optional.empty();
-                Record rec = result.single();
+                Record rec = result.next();
                 String alias = resolveAlias(rec);
                 T entity = entityMapper.map(rec, alias);
                 loadRelations(entity, 0);
@@ -554,7 +577,7 @@ public abstract class Repository<T> {
                 var result = tx.run(cypher, Values.value(parameters));
                 if (!result.hasNext())
                     return null;
-                Record rec = result.single();
+                Record rec = result.next();
                 String alias = resolveAlias(rec);
                 T entity = entityMapper.map(rec, alias);
                 loadRelations(entity, 0);
@@ -588,17 +611,23 @@ public abstract class Repository<T> {
     }
 
     public <R> R queryScalar(String cypher, Map<String, Object> parameters, Function<Record, R> mapper) {
-        return inReadTx(tx -> mapper.apply(tx.run(cypher, Values.value(parameters)).single()));
+        return inReadTx(tx -> {
+            var result = tx.run(cypher, Values.value(parameters));
+            if (!result.hasNext()) {
+                return null;
+            }
+            return mapper.apply(result.next());
+        });
     }
 
     // ========================= Relation Loading mit CDI Visitor =========================
 
-    protected void loadRelations(T entity, int currentDepth) {
+    protected void loadRelations(T entity, int depth) {
         if (entity == null || relationLoader == null || relationVisitor == null)
             return;
-        if (!relationVisitor.shouldVisit(entity, currentDepth))
+        if (!relationVisitor.shouldVisit(entity, depth))
             return;
-        relationLoader.loadRelations(entity, currentDepth);
+        relationLoader.loadRelations(entity, depth);
     }
 
     @SuppressWarnings("unchecked")
@@ -616,41 +645,120 @@ public abstract class Repository<T> {
         }
     }
 
+    protected void resetVisitor() {
+        if (relationVisitor != null) {
+            relationVisitor.reset();
+        }
+    }
+
     // ========================= Relationship Persistence =========================
 
-    private void persistRelationships(Transaction tx, String label, Object fromId, List<RelationshipData> relationships) {
-        if (relationships == null || relationships.isEmpty())
+    private void persistRelationships(
+            Transaction tx,
+            String sourceLabel,
+            Object fromId,
+            List<RelationshipData> relationships,
+            Set<String> visited) {
+
+        if (fromId == null || relationships == null || relationships.isEmpty()) {
             return;
+        }
+
+        String fromKey = sourceLabel + ":" + fromId;
+        if (!visited.add(fromKey)) {
+            return;
+        }
 
         for (RelationshipData rel : relationships) {
-            Object toId = rel.getTargetId();
 
-            if (rel.getTarget() != null) {
-                EntityWithRelations target = rel.getTarget();
-
-                @SuppressWarnings("unchecked")
-                Repository<Object> targetRepo = (Repository<Object>) registry.getRepository(target.getEntityType());
-
-                Object merged = targetRepo.createInternal(target);
-                toId = targetRepo.getEntityMapper().getNodeId(merged);
-
-                rel.setTargetId(toId);
-
-                persistRelationships(tx, target.getEntityType().getSimpleName(), toId, target.getRelationships());
+            if (rel.getMode() == RelationshipMode.FETCH_ONLY) {
+                continue;
             }
 
-            if (toId == null)
+            Object toId = rel.getTargetId();
+            EntityWithRelations target = rel.getTarget();
+            Repository<Object> targetRepo = null;
+
+            if (target != null) {
+                targetRepo = (Repository<Object>) registry.getRepository(target.getEntityType());
+
+                String idPropertyName = targetRepo.entityMapper.getNodeIdPropertyName();
+                Object targetEntityId = target.getProperties().get(idPropertyName);
+
+                if (targetEntityId != null) {
+                    String targetKey = targetRepo.label + ":" + targetEntityId.toString();
+
+                    if (!visited.contains(targetKey)) {
+                        visited.add(targetKey);
+
+                        try {
+                            Object merged = targetRepo.createInternal(target, visited);
+                            toId = targetRepo.entityMapper.getNodeId(merged);
+                            rel.setTargetId(toId);
+                        } catch (Exception e) {
+                            visited.remove(targetKey);
+                            throw e;
+                        }
+                    } else {
+                        toId = targetEntityId;
+                    }
+                } else {
+                    Object merged = targetRepo.createInternal(target, visited);
+                    toId = targetRepo.entityMapper.getNodeId(merged);
+                    rel.setTargetId(toId);
+                }
+            }
+
+            if (toId == null) {
                 continue;
+            }
 
-            String query = switch (rel.getDirection()) {
-                case OUTGOING ->
-                    "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)-[r:" + rel.getType() + "]->(b)";
-                case INCOMING ->
-                    "MATCH (a:" + label + " {id: $from}), (b {id: $to}) MERGE (a)<-[r:" + rel.getType() + "]-(b)";
-                default -> throw new UnsupportedOperationException("Direction not supported: " + rel.getDirection());
-            };
+            if (targetRepo == null) {
+                targetRepo = (Repository<Object>) registry.getRepository(
+                        target != null ? target.getEntityType() : null);
+                if (targetRepo == null) {
+                    continue;
+                }
+            }
 
-            tx.run(query, Values.parameters("from", fromId, "to", toId));
+            String targetLabel = targetRepo.label;
+
+            Map<String, Object> params = Map.of(
+                    "from", fromId.toString(),
+                    "to", toId.toString());
+
+            switch (rel.getDirection()) {
+                case OUTGOING -> tx.run(
+                        "MATCH (a:" + sourceLabel + " {id: $from}), " +
+                                "      (b:" + targetLabel + " {id: $to}) " +
+                                "MERGE (a)-[:" + rel.getType() + "]->(b)",
+                        params);
+
+                case INCOMING -> tx.run(
+                        "MATCH (a:" + sourceLabel + " {id: $from}), " +
+                                "      (b:" + targetLabel + " {id: $to}) " +
+                                "MERGE (a)<-[:" + rel.getType() + "]-(b)",
+                        params);
+
+                case UNDIRECTED -> tx.run(
+                        "MATCH (a:" + sourceLabel + " {id: $from}), " +
+                                "      (b:" + targetLabel + " {id: $to}) " +
+                                "MERGE (a)-[:" + rel.getType() + "]-(b)",
+                        params);
+
+                case BOTH -> {
+                    tx.run(
+                            "MATCH (a:" + sourceLabel + " {id: $from}), " +
+                                    "      (b:" + targetLabel + " {id: $to}) " +
+                                    "MERGE (a)-[:" + rel.getType() + "]->(b)",
+                            params);
+                    tx.run(
+                            "MATCH (a:" + sourceLabel + " {id: $from}), " +
+                                    "      (b:" + targetLabel + " {id: $to}) " +
+                                    "MERGE (a)<-[:" + rel.getType() + "]-(b)",
+                            params);
+                }
+            }
         }
     }
 
@@ -661,18 +769,18 @@ public abstract class Repository<T> {
     // ========================= Monitoring =========================
 
     public RelationVisitor.VisitorStats getVisitorStats() {
-        return relationVisitor.getStats();
+        return relationVisitor != null
+                ? relationVisitor.getStats()
+                : null;
     }
 
     public List<RelationVisitor.TraversalStep> getTraversalPath() {
-        return relationVisitor.getTraversalPath();
+        return relationVisitor != null ? relationVisitor.getTraversalPath() : null;
     }
 
     // ========================= Alias Resolution Helper =========================
 
     protected String resolveAlias(Record rec) {
-        if (rec == null || rec.keys().isEmpty())
-            return "node";
-        return rec.keys().getFirst();
+        return rec.keys().isEmpty() ? "node" : rec.keys().getFirst();
     }
 }

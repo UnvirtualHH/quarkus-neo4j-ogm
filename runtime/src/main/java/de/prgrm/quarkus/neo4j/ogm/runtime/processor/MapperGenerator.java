@@ -21,10 +21,6 @@ import de.prgrm.quarkus.neo4j.ogm.runtime.enums.RelationshipMode;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.*;
 import de.prgrm.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil;
 
-/**
- * Code generator for Neo4j entity mappers.
- * Generates null-safe property mappings (with null checks) and supports primitive types.
- */
 public class MapperGenerator {
 
     private final FieldMappingStrategy strategy;
@@ -33,24 +29,34 @@ public class MapperGenerator {
         this.strategy = strategy;
     }
 
-    public void generateMapper(String packageName, TypeElement entityType, String mapperClassName,
+    // ======================================================================
+    // Entry
+    // ======================================================================
+
+    public void generateMapper(
+            String packageName,
+            TypeElement entityType,
+            String mapperClassName,
             ProcessingEnvironment processingEnv) {
+
         TypeHandlerRegistry.init(processingEnv);
 
         MethodSpec mapMethod = generateMapMethod(entityType, processingEnv);
         MethodSpec toDbMethod = generateToDbMethod(entityType, processingEnv);
         MethodSpec getNodeIdMethod = generateGetNodeIdMethod(entityType);
         MethodSpec getNodeIdPropertyNameMethod = generateGetNodeIdPropertyName(entityType);
+        MethodSpec setRelationMethod = generateSetRelationMethod(entityType);
+        MethodSpec registerSelfMethod = generateRegisterSelfMethod(entityType);
 
         TypeSpec mapperClass = TypeSpec.classBuilder(mapperClassName)
                 .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
                 .addAnnotation(ApplicationScoped.class)
                 .addAnnotation(ClassName.get("io.quarkus.runtime", "Startup"))
                 .addSuperinterface(ParameterizedTypeName.get(
-                        ClassName.get("de.prgrm.quarkus.neo4j.ogm.runtime.mapping", "EntityMapper"),
+                        ClassName.get(EntityMapper.class),
                         TypeName.get(entityType.asType())))
                 .addField(FieldSpec.builder(
-                        ClassName.get("de.prgrm.quarkus.neo4j.ogm.runtime.mapping", "EntityMapperRegistry"),
+                        ClassName.get(EntityMapperRegistry.class),
                         "registry",
                         Modifier.PRIVATE)
                         .addAnnotation(ClassName.get("jakarta.inject", "Inject"))
@@ -59,195 +65,188 @@ public class MapperGenerator {
                 .addMethod(toDbMethod)
                 .addMethod(getNodeIdMethod)
                 .addMethod(getNodeIdPropertyNameMethod)
-                .addMethod(generateSetRelationMethod(entityType))
-                .addMethod(generateRegisterSelfMethod(entityType))
+                .addMethod(setRelationMethod)
+                .addMethod(registerSelfMethod)
                 .build();
 
-        JavaFile javaFile = JavaFile.builder(packageName, mapperClass).build();
-
         try {
-            javaFile.writeTo(processingEnv.getFiler());
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+            JavaFile.builder(packageName, mapperClass)
+                    .build()
+                    .writeTo(processingEnv.getFiler());
+
+            processingEnv.getMessager().printMessage(
+                    Diagnostic.Kind.NOTE,
                     "Generated mapper: " + packageName + "." + mapperClassName);
         } catch (IOException e) {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, e.toString());
+            processingEnv.getMessager().printMessage(
+                    Diagnostic.Kind.ERROR,
+                    e.toString());
         }
     }
 
-    private boolean shouldFetchRelationship(Relationship rel) {
-        return rel.mode() == RelationshipMode.FETCH_ONLY ||
-                rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
-    }
+    // ======================================================================
+    // map()
+    // ======================================================================
 
-    private boolean shouldPersistRelationship(Relationship rel) {
-        return rel.mode() == RelationshipMode.PERSIST_ONLY ||
-                rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
-    }
-
-    /**
-     * Generates the `map()` method for a given entity.
-     * Adds null-checks before reading any property.
-     */
     private MethodSpec generateMapMethod(TypeElement entityType, ProcessingEnvironment env) {
-        MethodSpec.Builder builder = MethodSpec.methodBuilder("map")
-                .addModifiers(Modifier.PUBLIC)
+        MethodSpec.Builder b = MethodSpec.methodBuilder("map")
                 .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
                 .returns(TypeName.get(entityType.asType()))
                 .addParameter(ClassName.get("org.neo4j.driver", "Record"), "record")
                 .addParameter(String.class, "alias")
-                .addStatement("$T instance = new $T()", TypeName.get(entityType.asType()), TypeName.get(entityType.asType()))
-                .addStatement("$T nodeValue = record.get(alias)", ClassName.get("org.neo4j.driver", "Value"));
-
-        for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
-            if (!shouldIncludeField(field, env))
-                continue;
-            generateMapStatement(field, builder, env);
-        }
-
-        builder.addStatement("return instance");
-        return builder.build();
-    }
-
-    /**
-     * Generates the mapping code for one field, wrapped in a null check.
-     */
-    private void generateMapStatement(VariableElement field, MethodSpec.Builder builder, ProcessingEnvironment env) {
-        Optional<TypeHandler> handler = TypeHandlerRegistry.findHandler(field, env.getTypeUtils(), env.getElementUtils());
-        String fieldName = field.getSimpleName().toString();
-
-        if (handler.isPresent()) {
-            builder.beginControlFlow("if (nodeValue.get($S) != null && !nodeValue.get($S).isNull())", fieldName, fieldName);
-            builder.addCode(handler.get().generateSetterCode(field, "instance", "nodeValue"));
-            builder.endControlFlow();
-        } else {
-            env.getMessager().printMessage(
-                    Diagnostic.Kind.WARNING,
-                    String.format(
-                            "No TypeHandler found for field '%s' of type '%s' in entity '%s'. Skipping.",
-                            field.getSimpleName(),
-                            field.asType(),
-                            field.getEnclosingElement().getSimpleName()),
-                    field);
-        }
-    }
-
-    /**
-     * Generates the `toDb()` method to map an entity to Neo4j properties.
-     */
-    private MethodSpec generateToDbMethod(TypeElement entityType, ProcessingEnvironment env) {
-        MethodSpec.Builder builder = MethodSpec.methodBuilder("toDb")
-                .addModifiers(Modifier.PUBLIC)
-                .addAnnotation(Override.class)
-                .returns(ClassName.get("de.prgrm.quarkus.neo4j.ogm.runtime.mapping", "EntityWithRelations"))
-                .addParameter(TypeName.get(entityType.asType()), "entity")
-                .addStatement("$T properties = new $T<>()",
-                        ParameterizedTypeName.get(Map.class, String.class, Object.class),
-                        ClassName.get("java.util", "HashMap"))
-                .addStatement("$T relationships = new $T<>()",
-                        ParameterizedTypeName.get(
-                                ClassName.get(List.class),
-                                ClassName.get("de.prgrm.quarkus.neo4j.ogm.runtime.mapping", "RelationshipData")),
-                        ClassName.get("java.util", "ArrayList"));
+                .addStatement("$T instance = new $T()",
+                        TypeName.get(entityType.asType()),
+                        TypeName.get(entityType.asType()))
+                .addStatement("$T nodeValue = record.get(alias)",
+                        ClassName.get("org.neo4j.driver", "Value"));
 
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             if (!shouldIncludeField(field, env))
                 continue;
 
             Optional<TypeHandler> handler = TypeHandlerRegistry.findHandler(field, env.getTypeUtils(), env.getElementUtils());
+
             if (handler.isPresent()) {
-                builder.addCode(handler.get().generateToDbCode(field, "entity", "properties"));
-            } else {
-                env.getMessager().printMessage(
-                        Diagnostic.Kind.WARNING,
-                        String.format(
-                                "No TypeHandler found for field '%s' of type '%s' in entity '%s'.",
-                                field.getSimpleName(),
-                                field.asType(),
-                                entityType.getSimpleName()),
-                        field);
+                String name = field.getSimpleName().toString();
+                b.beginControlFlow(
+                        "if (nodeValue.get($S) != null && !nodeValue.get($S).isNull())",
+                        name, name);
+                b.addCode(handler.get().generateSetterCode(field, "instance", "nodeValue"));
+                b.endControlFlow();
             }
+        }
+
+        b.addStatement("return instance");
+        return b.build();
+    }
+
+    // ======================================================================
+    // toDb()
+    // ======================================================================
+
+    private MethodSpec generateToDbMethod(TypeElement entityType, ProcessingEnvironment env) {
+        MethodSpec.Builder b = MethodSpec.methodBuilder("toDb")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
+                .returns(ClassName.get(EntityWithRelations.class))
+                .addParameter(TypeName.get(entityType.asType()), "entity")
+                .addStatement("$T<String,Object> properties = new $T<>()",
+                        Map.class, java.util.HashMap.class)
+                .addStatement("$T<$T> relationships = new $T<>()",
+                        List.class, RelationshipData.class, java.util.ArrayList.class);
+
+        // Properties
+        for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
+            if (!shouldIncludeField(field, env))
+                continue;
+
+            Optional<TypeHandler> handler = TypeHandlerRegistry.findHandler(field, env.getTypeUtils(), env.getElementUtils());
+
+            handler.ifPresent(h -> b.addCode(h.generateToDbCode(field, "entity", "properties")));
         }
 
         // Relationships
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
-            Relationship relationship = field.getAnnotation(Relationship.class);
-            if (relationship != null && shouldPersistRelationship(relationship)) {
-                String getterName = MapperUtil.resolveGetterName(field);
-                String relType = relationship.type();
-                Direction direction = relationship.direction();
-                String targetTypeName = MapperUtil.getFieldType(field);
-                boolean isCollection = field.asType().toString().startsWith("java.util.List");
+            Relationship rel = field.getAnnotation(Relationship.class);
+            if (rel == null || !shouldPersistRelationship(rel))
+                continue;
 
-                if (isCollection) {
-                    builder.beginControlFlow("if (entity.$L() != null)", getterName)
-                            .beginControlFlow("for (var related : entity.$L())", getterName)
-                            .addStatement(
-                                    "$T relatedWithRels = registry.get($T.class).toDb(related)",
-                                    ClassName.get(EntityWithRelations.class),
-                                    ClassName.bestGuess(targetTypeName))
-                            .addStatement(
-                                    "Object targetId = registry.get($T.class).getNodeId(related)",
-                                    ClassName.bestGuess(targetTypeName))
-                            .addStatement(
-                                    "relationships.add(new $T($S, $T.$L, targetId.toString(), relatedWithRels))",
-                                    ClassName.get(RelationshipData.class),
-                                    relType,
-                                    ClassName.get(Direction.class),
-                                    direction.name())
-                            .endControlFlow()
-                            .endControlFlow();
-                } else {
-                    builder.beginControlFlow("if (entity.$L() != null)", getterName)
-                            .addStatement(
-                                    "$T relatedWithRels = registry.get($T.class).toDb(entity.$L())",
-                                    ClassName.get(EntityWithRelations.class),
-                                    ClassName.bestGuess(targetTypeName),
-                                    getterName)
-                            .addStatement(
-                                    "Object targetId = registry.get($T.class).getNodeId(entity.$L())",
-                                    ClassName.bestGuess(targetTypeName),
-                                    getterName)
-                            .addStatement(
-                                    "relationships.add(new $T($S, $T.$L, targetId.toString(), relatedWithRels))",
-                                    ClassName.get(RelationshipData.class),
-                                    relType,
-                                    ClassName.get(Direction.class),
-                                    direction.name())
-                            .endControlFlow();
-                }
+            String getter = MapperUtil.resolveGetterName(field);
+            String targetType = MapperUtil.getFieldType(field);
+            boolean isCollection = field.asType().toString().startsWith("java.util.List");
+
+            if (isCollection) {
+                b.beginControlFlow("if (entity.$L() != null)", getter)
+                        .beginControlFlow("for (var related : entity.$L())", getter)
+                        .addCode(buildRelationshipAddCode(rel, targetType, "related"))
+                        .endControlFlow()
+                        .endControlFlow();
+            } else {
+                b.beginControlFlow("if (entity.$L() != null)", getter)
+                        .addCode(buildRelationshipAddCode(rel, targetType, "entity." + getter + "()"))
+                        .endControlFlow();
             }
         }
 
-        builder.addStatement("return new $T($T.class, properties, relationships)",
-                ClassName.get(EntityWithRelations.class),
+        b.addStatement("return new $T($T.class, properties, relationships)",
+                EntityWithRelations.class,
                 TypeName.get(entityType.asType()));
 
-        return builder.build();
+        return b.build();
     }
+
+    private CodeBlock buildRelationshipAddCode(
+            Relationship rel,
+            String targetType,
+            String accessExpr) {
+
+        CodeBlock.Builder cb = CodeBlock.builder();
+
+        cb.addStatement(
+                "$T relatedWithRels = null",
+                EntityWithRelations.class);
+
+        cb.beginControlFlow(
+                "if ($T.$L == $T.PERSIST_ONLY || $T.$L == $T.FETCH_AND_PERSIST)",
+                RelationshipMode.class,
+                rel.mode().name(),
+                RelationshipMode.class,
+                RelationshipMode.class,
+                rel.mode().name(),
+                RelationshipMode.class);
+
+        cb.addStatement(
+                "relatedWithRels = registry.get($T.class).toDb($L)",
+                ClassName.bestGuess(targetType),
+                accessExpr);
+
+        cb.endControlFlow();
+
+        cb.addStatement(
+                "Object targetId = registry.get($T.class).getNodeId($L)",
+                ClassName.bestGuess(targetType),
+                accessExpr);
+
+        cb.addStatement(
+                "relationships.add(new $T($S, $T.$L, $T.$L, targetId, relatedWithRels))",
+                RelationshipData.class,
+                rel.type(),
+                Direction.class,
+                rel.direction().name(),
+                RelationshipMode.class,
+                rel.mode().name());
+
+        return cb.build();
+    }
+
+    // ======================================================================
+    // NodeId
+    // ======================================================================
 
     private MethodSpec generateGetNodeIdMethod(TypeElement entityType) {
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
-            if (field.getAnnotation(NodeId.class) != null) {
-                String getterName = MapperUtil.resolveGetterName(field);
-                boolean isGenerated = field.getAnnotation(GeneratedValue.class) != null;
-                boolean isUUID = field.asType().toString().equals("java.util.UUID");
+            if (field.getAnnotation(NodeId.class) == null)
+                continue;
 
-                MethodSpec.Builder methodBuilder = MethodSpec.methodBuilder("getNodeId")
-                        .addAnnotation(Override.class)
-                        .addModifiers(Modifier.PUBLIC)
-                        .returns(Object.class)
-                        .addParameter(TypeName.get(entityType.asType()), "entity");
+            String getter = MapperUtil.resolveGetterName(field);
+            String type = field.asType().toString();
 
-                if (isGenerated && isUUID) {
-                    methodBuilder.addStatement("return entity.$L() != null ? entity.$L().toString() : null",
-                            getterName, getterName);
-                } else {
-                    methodBuilder.addStatement("return entity.$L()", getterName);
-                }
-                return methodBuilder.build();
+            MethodSpec.Builder b = MethodSpec.methodBuilder("getNodeId")
+                    .addAnnotation(Override.class)
+                    .addModifiers(Modifier.PUBLIC)
+                    .returns(Object.class)
+                    .addParameter(TypeName.get(entityType.asType()), "entity");
+
+            if (type.equals("java.util.UUID")) {
+                b.addStatement("return entity.$L() != null ? entity.$L().toString() : null", getter, getter);
+            } else {
+                b.addStatement("return entity.$L()", getter);
             }
+            return b.build();
         }
-        throw new IllegalStateException("No field annotated with @NodeId in " + entityType.getSimpleName());
+
+        throw new IllegalStateException("No @NodeId field in " + entityType.getSimpleName());
     }
 
     private MethodSpec generateGetNodeIdPropertyName(TypeElement entityType) {
@@ -261,60 +260,58 @@ public class MapperGenerator {
                         .build();
             }
         }
-        throw new IllegalStateException("No field annotated with @NodeId in " + entityType.getSimpleName());
+        throw new IllegalStateException("No @NodeId field in " + entityType.getSimpleName());
     }
 
+    // ======================================================================
+    // setRelation (fetch side)
+    // ======================================================================
+
     private MethodSpec generateSetRelationMethod(TypeElement entityType) {
-        List<VariableElement> relationshipFields = ElementFilter.fieldsIn(entityType.getEnclosedElements())
+        List<VariableElement> relFields = ElementFilter.fieldsIn(entityType.getEnclosedElements())
                 .stream()
                 .filter(f -> {
-                    Relationship rel = f.getAnnotation(Relationship.class);
-                    return rel != null && shouldFetchRelationship(rel);
+                    Relationship r = f.getAnnotation(Relationship.class);
+                    return r != null && shouldFetchRelationship(r);
                 })
                 .toList();
 
-        MethodSpec.Builder builder = MethodSpec.methodBuilder("setRelation")
+        MethodSpec.Builder b = MethodSpec.methodBuilder("setRelation")
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
                 .addParameter(TypeName.get(entityType.asType()), "entity")
                 .addParameter(String.class, "relationType")
                 .addParameter(Object.class, "relatedEntity");
 
-        if (relationshipFields.isEmpty()) {
-            builder.addStatement("// no fetchable relationships");
-            return builder.build();
+        if (relFields.isEmpty()) {
+            b.addStatement("// no relations");
+            return b.build();
         }
 
-        builder.beginControlFlow("switch (relationType)");
-        for (VariableElement field : relationshipFields) {
+        b.beginControlFlow("switch (relationType)");
+        for (VariableElement field : relFields) {
             Relationship rel = field.getAnnotation(Relationship.class);
-            String relType = rel.type();
-            String setterName = MapperUtil.resolveSetterName(field);
-            String getterName = MapperUtil.resolveGetterName(field);
+            String setter = MapperUtil.resolveSetterName(field);
+            String getter = MapperUtil.resolveGetterName(field);
             boolean isCollection = field.asType().toString().startsWith("java.util.List");
-            String targetTypeName = MapperUtil.getFieldType(field);
+            String targetType = MapperUtil.getFieldType(field);
 
-            builder.beginControlFlow("case $S ->", relType);
+            b.beginControlFlow("case $S ->", rel.type());
             if (isCollection) {
-                builder.beginControlFlow("if (entity.$L() == null)", getterName)
-                        .addStatement("entity.$L(new $T<>())", setterName, ClassName.get("java.util", "ArrayList"))
+                b.beginControlFlow("if (entity.$L() == null)", getter)
+                        .addStatement("entity.$L(new $T<>())", setter, java.util.ArrayList.class)
                         .endControlFlow()
-                        .addStatement("entity.$L().add(($T) relatedEntity)",
-                                getterName, ClassName.bestGuess(targetTypeName));
+                        .addStatement("entity.$L().add(($T) relatedEntity)", getter, ClassName.bestGuess(targetType));
             } else {
-                builder.addStatement("entity.$L(($T) relatedEntity)",
-                        setterName, ClassName.bestGuess(targetTypeName));
+                b.addStatement("entity.$L(($T) relatedEntity)", setter, ClassName.bestGuess(targetType));
             }
-            builder.addStatement("break");
-            builder.endControlFlow();
+            b.addStatement("break");
+            b.endControlFlow();
         }
-        builder.beginControlFlow("default ->")
-                .addStatement("// ignore unknown relation")
-                .addStatement("break")
-                .endControlFlow();
-        builder.endControlFlow();
+        b.beginControlFlow("default ->").addStatement("break").endControlFlow();
+        b.endControlFlow();
 
-        return builder.build();
+        return b.build();
     }
 
     private MethodSpec generateRegisterSelfMethod(TypeElement entityType) {
@@ -324,15 +321,31 @@ public class MapperGenerator {
                 .build();
     }
 
+    // ======================================================================
+    // Helpers
+    // ======================================================================
+
+    private boolean shouldFetchRelationship(Relationship rel) {
+        return rel.mode() == RelationshipMode.FETCH_ONLY
+                || rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
+    }
+
+    private boolean shouldPersistRelationship(Relationship rel) {
+        return rel.mode() == RelationshipMode.PERSIST_ONLY
+                || rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
+    }
+
     private boolean shouldIncludeField(VariableElement field, ProcessingEnvironment env) {
         if (strategy == FieldMappingStrategy.EXPLICIT) {
             return field.getAnnotation(Property.class) != null
                     || field.getAnnotation(NodeId.class) != null
                     || field.getAnnotation(Convert.class) != null
                     || field.getAnnotation(Enumerated.class) != null;
-        } else {
-            return field.getAnnotation(Transient.class) == null
-                    && TypeHandlerRegistry.findHandler(field, env.getTypeUtils(), env.getElementUtils()).isPresent();
         }
+        return field.getAnnotation(Transient.class) == null
+                && TypeHandlerRegistry.findHandler(
+                        field,
+                        env.getTypeUtils(),
+                        env.getElementUtils()).isPresent();
     }
 }

@@ -8,6 +8,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * Supports AND, OR, nested filters, and operators like:
  * =, <>, <, <=, >, >=, CONTAINS, STARTS WITH, ENDS WITH, IN, BETWEEN, IS NULL, IS NOT NULL
+ *
+ * String operators (EQ, NE, CONTAINS, STARTS_WITH, ENDS_WITH) are case-insensitive.
  */
 public class Filter {
 
@@ -79,12 +81,26 @@ public class Filter {
     }
 
     /**
-     * A single condition like n.name CONTAINS $param_1
+     * A single condition like toLower(n.name) CONTAINS toLower($param_1)
      */
     public record Condition(String property, Operator op, Object... values) {
 
         String toCypher(String alias, AtomicInteger counter) {
             String nodeProp = alias + "." + property;
+
+            // Case-insensitive string operators
+            boolean caseInsensitive = op == Operator.CONTAINS ||
+                    op == Operator.STARTS_WITH ||
+                    op == Operator.ENDS_WITH ||
+                    op == Operator.EQ ||
+                    op == Operator.NE;
+
+            if (caseInsensitive) {
+                return "toLower(" + nodeProp + ") "
+                        + op.symbol + " toLower($" + paramName(counter, 0) + ")";
+            }
+
+            // Default operators
             return switch (op) {
                 case IS_NULL -> nodeProp + " IS NULL";
                 case IS_NOT_NULL -> nodeProp + " IS NOT NULL";
