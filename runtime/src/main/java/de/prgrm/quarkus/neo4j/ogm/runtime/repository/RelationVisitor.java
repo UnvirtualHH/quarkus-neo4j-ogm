@@ -149,6 +149,27 @@ public class RelationVisitor {
     }
 
     /**
+     * Mark an entity as persisted (for cycle prevention during persist operations).
+     * Returns true if entity was newly marked, false if already marked.
+     */
+    public boolean markPersisted(String label, Object id) {
+        if (id == null)
+            return false;
+        String key = label + ":" + id.toString();
+        return CONTEXT.get().persistedEntities.add(key);
+    }
+
+    /**
+     * Check if entity was already persisted.
+     */
+    public boolean wasPersisted(String label, Object id) {
+        if (id == null)
+            return false;
+        String key = label + ":" + id.toString();
+        return CONTEXT.get().persistedEntities.contains(key);
+    }
+
+    /**
      * Get current traversal depth.
      */
     public int getCurrentDepth() {
@@ -178,6 +199,7 @@ public class RelationVisitor {
         context.visitedObjects.clear();
         context.traversalPath.clear();
         context.stats.reset();
+        context.persistedEntities.clear();
         context.maxDepth = DEFAULT_MAX_DEPTH;
     }
 
@@ -252,6 +274,7 @@ public class RelationVisitor {
         final Set<IdentityWrapper> visitedObjects = ConcurrentHashMap.newKeySet();
         final List<TraversalStep> traversalPath = new ArrayList<>();
         final VisitorStats stats = new VisitorStats();
+        final Set<String> persistedEntities = ConcurrentHashMap.newKeySet();
         int maxDepth = DEFAULT_MAX_DEPTH;
         boolean debug = false;
     }

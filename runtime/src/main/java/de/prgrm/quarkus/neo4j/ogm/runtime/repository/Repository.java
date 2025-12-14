@@ -266,43 +266,37 @@ public abstract class Repository<T> {
         }
     }
 
-    private T createInternal(EntityWithRelations entity) {
-        return createInternal(entity, new HashSet<>());
-    }
+    private T createInternal(Transaction tx, EntityWithRelations entity) {
+        Map<String, Object> props = entity.getProperties();
+        String idProp = entityMapper.getNodeIdPropertyName();
+        Object id = props.get(idProp);
 
-    private T createInternal(EntityWithRelations entity, Set<String> visited) {
-        return inWriteTx(tx -> {
-            Map<String, Object> props = entity.getProperties();
-            String idProp = entityMapper.getNodeIdPropertyName();
-            Object id = props.get(idProp);
+        if (id == null) {
+            throw new IllegalStateException("No @NodeId value present");
+        }
 
-            if (id == null) {
-                throw new IllegalStateException("No @NodeId value present");
-            }
+        String cypher = "MERGE (n:" + label + " {" + idProp + ": $" + idProp + "}) " +
+                "SET n += $props " +
+                "RETURN n AS node";
 
-            String cypher = "MERGE (n:" + label + " {" + idProp + ": $" + idProp + "}) " +
-                    "SET n += $props " +
-                    "RETURN n AS node";
+        Map<String, Object> params = new HashMap<>();
+        params.put(idProp, id);
+        params.put("props", props);
 
-            Map<String, Object> params = new HashMap<>();
-            params.put(idProp, id);
-            params.put("props", props);
+        var result = tx.run(cypher, params);
 
-            var result = tx.run(cypher, params);
+        if (!result.hasNext()) {
+            throw new IllegalStateException(
+                    "MERGE did not return a node for "
+                            + getEntityType().getSimpleName()
+                            + " with id=" + id);
+        }
 
-            if (!result.hasNext()) {
-                throw new IllegalStateException(
-                        "MERGE did not return a node for "
-                                + getEntityType().getSimpleName()
-                                + " with id=" + id);
-            }
+        Record rec = result.next();
+        T saved = entityMapper.map(rec, resolveAlias(rec));
 
-            Record rec = result.next();
-            T saved = entityMapper.map(rec, resolveAlias(rec));
-
-            persistRelationships(tx, label, id, entity.getRelationships(), visited);
-            return saved;
-        });
+        persistRelationships(tx, label, id, entity.getRelationships(), new HashSet<>());
+        return saved;
     }
 
     public T update(T entity) {
@@ -664,8 +658,11 @@ public abstract class Repository<T> {
             return;
         }
 
-        String fromKey = sourceLabel + ":" + fromId;
-        if (!visited.add(fromKey)) {
+        if (relationVisitor == null) {
+            throw new IllegalStateException("RelationVisitor is required but not available");
+        }
+
+        if (!relationVisitor.markPersisted(sourceLabel, fromId)) {
             return;
         }
 
@@ -686,24 +683,15 @@ public abstract class Repository<T> {
                 Object targetEntityId = target.getProperties().get(idPropertyName);
 
                 if (targetEntityId != null) {
-                    String targetKey = targetRepo.label + ":" + targetEntityId.toString();
-
-                    if (!visited.contains(targetKey)) {
-                        visited.add(targetKey);
-
-                        try {
-                            Object merged = targetRepo.createInternal(target, visited);
-                            toId = targetRepo.entityMapper.getNodeId(merged);
-                            rel.setTargetId(toId);
-                        } catch (Exception e) {
-                            visited.remove(targetKey);
-                            throw e;
-                        }
+                    if (!relationVisitor.wasPersisted(targetRepo.label, targetEntityId)) {
+                        Object merged = targetRepo.createInternal(tx, target); // ← TX übergeben!
+                        toId = targetRepo.entityMapper.getNodeId(merged);
+                        rel.setTargetId(toId);
                     } else {
                         toId = targetEntityId;
                     }
                 } else {
-                    Object merged = targetRepo.createInternal(target, visited);
+                    Object merged = targetRepo.createInternal(tx, target); // ← TX übergeben!
                     toId = targetRepo.entityMapper.getNodeId(merged);
                     rel.setTargetId(toId);
                 }
