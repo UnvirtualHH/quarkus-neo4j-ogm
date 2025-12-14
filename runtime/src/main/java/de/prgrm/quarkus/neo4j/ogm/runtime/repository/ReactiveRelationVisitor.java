@@ -102,6 +102,30 @@ public class ReactiveRelationVisitor {
         return Uni.createFrom().item(ctx.visitedObjects.contains(new IdentityWrapper(entity)));
     }
 
+    /**
+     * Mark an entity as persisted (for cycle prevention during persist operations).
+     * Returns true if entity was newly marked, false if already marked.
+     */
+    public Uni<Boolean> markPersisted(String label, Object id, VisitorContext ctx) {
+        if (id == null) {
+            return Uni.createFrom().item(false);
+        }
+        String key = label + ":" + id.toString();
+        boolean added = ctx.persistedEntities.add(key);
+        return Uni.createFrom().item(added);
+    }
+
+    /**
+     * Check if entity was already persisted.
+     */
+    public Uni<Boolean> wasPersisted(String label, Object id, VisitorContext ctx) {
+        if (id == null) {
+            return Uni.createFrom().item(false);
+        }
+        String key = label + ":" + id.toString();
+        return Uni.createFrom().item(ctx.persistedEntities.contains(key));
+    }
+
     // -------------------- Context factory --------------------
 
     public VisitorContext newContext() {
@@ -155,6 +179,7 @@ public class ReactiveRelationVisitor {
         final Set<IdentityWrapper> visitedObjects = ConcurrentHashMap.newKeySet();
         final List<TraversalStep> traversalPath = new ArrayList<>();
         final VisitorStats stats = new VisitorStats();
+        final Set<String> persistedEntities = ConcurrentHashMap.newKeySet();
         int maxDepth;
 
         public VisitorContext(int maxDepth) {
