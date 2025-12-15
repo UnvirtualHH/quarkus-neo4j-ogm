@@ -372,7 +372,8 @@ public abstract class Repository<T> {
         try {
             if (id == null)
                 throw new IllegalArgumentException("ID cannot be null");
-            inWriteTxVoid(tx -> tx.run("MATCH (n:" + label + " {id: $id}) DELETE n", Values.parameters("id", id)).consume());
+            inWriteTxVoid(
+                    tx -> tx.run("MATCH (n:" + label + " {id: $id}) DETACH DELETE n", Values.parameters("id", id)).consume());
         } finally {
             if (relationVisitor != null)
                 relationVisitor.reset();

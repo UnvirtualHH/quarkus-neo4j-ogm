@@ -216,7 +216,7 @@ public abstract class ReactiveRepository<T> {
 
     public Uni<Void> deleteById(Object id) {
         resetVisitor();
-        return runWriteQueryVoid(null, "MATCH (n:" + label + " {id: $id}) DELETE n", Map.of("id", id));
+        return runWriteQueryVoid(null, "MATCH (n:" + label + " {id: $id}) DETACH DELETE n", Map.of("id", id));
     }
 
     public Uni<Boolean> existsById(Object id) {

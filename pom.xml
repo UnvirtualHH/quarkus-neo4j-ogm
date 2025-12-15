@@ -12,7 +12,7 @@
 
     <groupId>de.prgrm.quarkus-neo4j-ogm</groupId>
     <artifactId>quarkus-neo4j-ogm-parent</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.3</version>
     <packaging>pom</packaging>
 
     <name>Quarkus Neo4j OGM - Parent</name>
@@ -75,7 +75,7 @@
 
     <build>
         <plugins>
-            <!--plugin>
+            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-gpg-plugin</artifactId>
                 <version>3.2.8</version>
@@ -88,7 +88,7 @@
                         </goals>
                     </execution>
                 </executions>
-            </plugin-->
+            </plugin>
         </plugins>
         <pluginManagement>
             <plugins>
