@@ -50,34 +50,23 @@ public class Filter {
      */
     public CypherFragment toCypher(String alias) {
         AtomicInteger paramCounter = new AtomicInteger(0);
-        String cypher = buildClause(alias, paramCounter);
-        Map<String, Object> params = buildParams(paramCounter);
+        Map<String, Object> params = new LinkedHashMap<>();
+        String cypher = buildClause(alias, paramCounter, params);
         if (!cypher.isBlank()) {
             cypher = "WHERE " + cypher;
         }
         return new CypherFragment(cypher, params);
     }
 
-    private String buildClause(String alias, AtomicInteger paramCounter) {
+    private String buildClause(String alias, AtomicInteger paramCounter, Map<String, Object> params) {
         List<String> parts = new ArrayList<>();
         for (Condition c : conditions) {
-            parts.add(c.toCypher(alias, paramCounter));
+            parts.add(c.toCypher(alias, paramCounter, params));
         }
         for (Filter group : orGroups) {
-            parts.add("(" + group.buildClause(alias, paramCounter) + ")");
+            parts.add("(" + group.buildClause(alias, paramCounter, params) + ")");
         }
         return String.join(" " + logicalOperator + " ", parts);
-    }
-
-    private Map<String, Object> buildParams(AtomicInteger counter) {
-        Map<String, Object> params = new LinkedHashMap<>();
-        for (Condition c : conditions) {
-            params.putAll(c.toParams(counter));
-        }
-        for (Filter group : orGroups) {
-            params.putAll(group.buildParams(counter));
-        }
-        return params;
     }
 
     /**
@@ -85,7 +74,7 @@ public class Filter {
      */
     public record Condition(String property, Operator op, Object... values) {
 
-        String toCypher(String alias, AtomicInteger counter) {
+        String toCypher(String alias, AtomicInteger counter, Map<String, Object> params) {
             String nodeProp = alias + "." + property;
 
             // Case-insensitive string operators
@@ -96,37 +85,38 @@ public class Filter {
                     op == Operator.NE;
 
             if (caseInsensitive) {
+                String paramName = generateParamName(counter);
+                params.put(paramName, values[0]);
                 return "toLower(" + nodeProp + ") "
-                        + op.symbol + " toLower($" + paramName(counter, 0) + ")";
+                        + op.symbol + " toLower($" + paramName + ")";
             }
 
             // Default operators
             return switch (op) {
                 case IS_NULL -> nodeProp + " IS NULL";
                 case IS_NOT_NULL -> nodeProp + " IS NOT NULL";
-                case BETWEEN -> nodeProp + " >= $" + paramName(counter, 0)
-                        + " AND " + nodeProp + " <= $" + paramName(counter, 1);
-                case IN -> nodeProp + " IN $" + paramName(counter, 0);
-                default -> nodeProp + " " + op.symbol + " $" + paramName(counter, 0);
+                case BETWEEN -> {
+                    String param1 = generateParamName(counter);
+                    String param2 = generateParamName(counter);
+                    params.put(param1, values[0]);
+                    params.put(param2, values[1]);
+                    yield nodeProp + " >= $" + param1 + " AND " + nodeProp + " <= $" + param2;
+                }
+                case IN -> {
+                    String paramName = generateParamName(counter);
+                    params.put(paramName, values[0]);
+                    yield nodeProp + " IN $" + paramName;
+                }
+                default -> {
+                    String paramName = generateParamName(counter);
+                    params.put(paramName, values[0]);
+                    yield nodeProp + " " + op.symbol + " $" + paramName;
+                }
             };
         }
 
-        Map<String, Object> toParams(AtomicInteger counter) {
-            Map<String, Object> map = new LinkedHashMap<>();
-            switch (op) {
-                case IS_NULL, IS_NOT_NULL -> {
-                    /* no params */ }
-                case BETWEEN -> {
-                    map.put(paramName(counter, 0), values[0]);
-                    map.put(paramName(counter, 1), values[1]);
-                }
-                default -> map.put(paramName(counter, 0), values[0]);
-            }
-            return map;
-        }
-
-        private String paramName(AtomicInteger counter, int offset) {
-            return property + "_" + (counter.get() + offset);
+        private String generateParamName(AtomicInteger counter) {
+            return property + "_" + counter.getAndIncrement();
         }
     }
 

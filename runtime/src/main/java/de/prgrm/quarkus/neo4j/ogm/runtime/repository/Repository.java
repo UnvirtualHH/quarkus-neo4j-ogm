@@ -212,21 +212,26 @@ public abstract class Repository<T> {
     public Paged<T> findAllPaged(Pageable pageable, Sortable sortable) {
         try {
             String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
-            String cypher = String.format("MATCH (n:%s) RETURN n AS node %s SKIP $skip LIMIT $limit", label, sortClause);
-            Map<String, Object> params = Map.of("skip", pageable.page() * pageable.size(), "limit", pageable.size());
 
-            List<T> content = inReadTx(tx -> {
-                var result = tx.run(cypher, params);
+            // Single transaction for both content and count - avoids N+1 and ensures consistency
+            return inReadTx(tx -> {
+                // Count query
+                String countCypher = String.format("MATCH (n:%s) RETURN count(n) AS count", label);
+                long total = tx.run(countCypher).single().get("count").asLong();
+
+                // Content query
+                String contentCypher = String.format("MATCH (n:%s) RETURN n AS node %s SKIP $skip LIMIT $limit", label,
+                        sortClause);
+                Map<String, Object> params = Map.of("skip", pageable.page() * pageable.size(), "limit", pageable.size());
+                var result = tx.run(contentCypher, params);
                 List<T> entities = result.list(rec -> {
                     String alias = resolveAlias(rec);
                     return entityMapper.map(rec, alias);
                 });
                 entities.forEach(e -> loadRelations(e, 0));
-                return entities;
-            });
 
-            long total = count();
-            return new Paged<>(content, total, pageable.page(), pageable.size());
+                return new Paged<>(entities, total, pageable.page(), pageable.size());
+            });
         } finally {
             if (relationVisitor != null)
                 relationVisitor.reset();
@@ -259,6 +264,140 @@ public abstract class Repository<T> {
 
                 persistRelationships(tx, label, id, data.getRelationships(), new HashSet<>());
                 return saved;
+            });
+        } finally {
+            if (relationVisitor != null)
+                relationVisitor.reset();
+        }
+    }
+
+    /**
+     * Batch create multiple entities in a single transaction using UNWIND for optimal performance.
+     * Relationships are NOT persisted in batch mode - use createAll() if you need relationship persistence.
+     *
+     * @param entities the entities to create
+     * @return list of created entities
+     */
+    public List<T> createAllBatch(List<T> entities) {
+        if (entities == null || entities.isEmpty()) {
+            return List.of();
+        }
+
+        try {
+            return inWriteTx(tx -> {
+                List<Map<String, Object>> propsList = new ArrayList<>();
+                for (T entity : entities) {
+                    EntityWithRelations data = entityMapper.toDb(entity);
+                    propsList.add(data.getProperties());
+                }
+
+                String cypher = "UNWIND $batch AS props CREATE (n:" + label + ") SET n = props RETURN n AS node";
+                var result = tx.run(cypher, Values.parameters("batch", propsList));
+
+                return result.list(rec -> {
+                    String alias = resolveAlias(rec);
+                    return entityMapper.map(rec, alias);
+                });
+            });
+        } finally {
+            if (relationVisitor != null)
+                relationVisitor.reset();
+        }
+    }
+
+    /**
+     * Create multiple entities with relationship persistence.
+     * Uses a single transaction but creates entities individually to support relationships.
+     *
+     * @param entities the entities to create
+     * @return list of created entities
+     */
+    public List<T> createAll(List<T> entities) {
+        if (entities == null || entities.isEmpty()) {
+            return List.of();
+        }
+
+        try {
+            return inWriteTx(tx -> {
+                List<T> results = new ArrayList<>();
+                for (T entity : entities) {
+                    EntityWithRelations data = entityMapper.toDb(entity);
+                    Object id = entityMapper.getNodeId(entity);
+
+                    var result = tx.run("CREATE (n:" + label + " $props) RETURN n AS node",
+                            Values.parameters("props", data.getProperties()));
+                    Record rec = result.single();
+                    String alias = resolveAlias(rec);
+                    T saved = entityMapper.map(rec, alias);
+
+                    persistRelationships(tx, label, id, data.getRelationships(), new HashSet<>());
+                    results.add(saved);
+                }
+                return results;
+            });
+        } finally {
+            if (relationVisitor != null)
+                relationVisitor.reset();
+        }
+    }
+
+    /**
+     * Batch delete multiple entities by their IDs in a single query.
+     *
+     * @param ids the IDs of entities to delete
+     */
+    public void deleteAllByIds(List<Object> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return;
+        }
+
+        try {
+            List<String> idStrings = ids.stream()
+                    .filter(id -> id != null)
+                    .map(Object::toString)
+                    .toList();
+
+            inWriteTxVoid(tx -> tx.run(
+                    "MATCH (n:" + label + ") WHERE n.id IN $ids DETACH DELETE n",
+                    Values.parameters("ids", idStrings)).consume());
+        } finally {
+            if (relationVisitor != null)
+                relationVisitor.reset();
+        }
+    }
+
+    /**
+     * Batch merge multiple entities using UNWIND for optimal performance.
+     *
+     * @param entities the entities to merge
+     * @return list of merged entities
+     */
+    public List<T> mergeAllBatch(List<T> entities) {
+        if (entities == null || entities.isEmpty()) {
+            return List.of();
+        }
+
+        try {
+            return inWriteTx(tx -> {
+                String idProp = entityMapper.getNodeIdPropertyName();
+                List<Map<String, Object>> propsList = new ArrayList<>();
+
+                for (T entity : entities) {
+                    EntityWithRelations data = entityMapper.toDb(entity);
+                    propsList.add(data.getProperties());
+                }
+
+                String cypher = "UNWIND $batch AS props " +
+                        "MERGE (n:" + label + " {" + idProp + ": props." + idProp + "}) " +
+                        "SET n += props " +
+                        "RETURN n AS node";
+
+                var result = tx.run(cypher, Values.parameters("batch", propsList));
+
+                return result.list(rec -> {
+                    String alias = resolveAlias(rec);
+                    return entityMapper.map(rec, alias);
+                });
             });
         } finally {
             if (relationVisitor != null)
@@ -373,7 +512,7 @@ public abstract class Repository<T> {
             if (id == null)
                 throw new IllegalArgumentException("ID cannot be null");
             inWriteTxVoid(
-                    tx -> tx.run("MATCH (n:" + label + " {id: $id}) DETACH DELETE n", Values.parameters("id", id)).consume());
+                    tx -> tx.run("MATCH (n:" + label + " {id: $id}) DETACH DELETE n", Values.parameters("id", id.toString())).consume());
         } finally {
             if (relationVisitor != null)
                 relationVisitor.reset();
@@ -384,7 +523,7 @@ public abstract class Repository<T> {
         try {
             return inReadTx(tx -> {
                 var result = tx.run("MATCH (n:" + label + " {id: $id}) RETURN count(n) > 0 AS exists",
-                        Values.parameters("id", id));
+                        Values.parameters("id", id.toString()));
                 return result.single().get("exists").asBoolean();
             });
         } finally {
@@ -456,31 +595,29 @@ public abstract class Repository<T> {
             Filter.CypherFragment frag = (filter != null) ? filter.toCypher("n") : new Filter.CypherFragment("", Map.of());
             String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
 
-            String pagedCypher = String.format("%s %s RETURN n AS node %s SKIP $skip LIMIT $limit",
-                    baseCypher, frag.clause(), sortClause);
-
             Map<String, Object> allParams = new HashMap<>(parameters);
             allParams.putAll(frag.params());
             allParams.put("skip", pageable.page() * pageable.size());
             allParams.put("limit", pageable.size());
 
-            List<T> content = inReadTx(tx -> {
+            // Single transaction for both count and content - avoids inconsistency and extra roundtrip
+            return inReadTx(tx -> {
+                // Count query first
+                String countCypher = String.format("%s %s RETURN count(n) AS count", baseCypher, frag.clause());
+                long total = tx.run(countCypher, allParams).single().get("count").asLong();
+
+                // Content query
+                String pagedCypher = String.format("%s %s RETURN n AS node %s SKIP $skip LIMIT $limit",
+                        baseCypher, frag.clause(), sortClause);
                 var result = tx.run(pagedCypher, allParams);
                 List<T> entities = result.list(rec -> {
                     String alias = resolveAlias(rec);
                     return entityMapper.map(rec, alias);
                 });
                 entities.forEach(e -> loadRelations(e, 0));
-                return entities;
-            });
 
-            String countCypher = String.format("%s %s RETURN count(n) AS count", baseCypher, frag.clause());
-            long total = inReadTx(tx -> {
-                var result = tx.run(countCypher, allParams);
-                return result.single().get("count").asLong();
+                return new Paged<>(entities, total, pageable.page(), pageable.size());
             });
-
-            return new Paged<>(content, total, pageable.page(), pageable.size());
         } finally {
             if (relationVisitor != null)
                 relationVisitor.reset();
@@ -490,28 +627,27 @@ public abstract class Repository<T> {
     public Paged<T> queryPaged(String baseCypher, Map<String, Object> parameters, Pageable pageable, Sortable sortable) {
         try {
             String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
-            String pagedCypher = baseCypher + " RETURN n AS node " + sortClause + " SKIP $skip LIMIT $limit";
             Map<String, Object> allParams = new HashMap<>(parameters);
             allParams.put("skip", pageable.page() * pageable.size());
             allParams.put("limit", pageable.size());
 
-            List<T> content = inReadTx(tx -> {
+            // Single transaction for both count and content - avoids inconsistency and extra roundtrip
+            return inReadTx(tx -> {
+                // Count query first
+                String countCypher = baseCypher + " RETURN count(n) AS count";
+                long total = tx.run(countCypher, parameters).single().get("count").asLong();
+
+                // Content query
+                String pagedCypher = baseCypher + " RETURN n AS node " + sortClause + " SKIP $skip LIMIT $limit";
                 var result = tx.run(pagedCypher, allParams);
                 List<T> entities = result.list(rec -> {
                     String alias = resolveAlias(rec);
                     return entityMapper.map(rec, alias);
                 });
                 entities.forEach(e -> loadRelations(e, 0));
-                return entities;
-            });
 
-            String countCypher = baseCypher + " RETURN count(n) AS count";
-            long total = inReadTx(tx -> {
-                var result = tx.run(countCypher, parameters);
-                return result.single().get("count").asLong();
+                return new Paged<>(entities, total, pageable.page(), pageable.size());
             });
-
-            return new Paged<>(content, total, pageable.page(), pageable.size());
         } finally {
             if (relationVisitor != null)
                 relationVisitor.reset();

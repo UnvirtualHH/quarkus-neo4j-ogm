@@ -305,7 +305,10 @@ public class RelationVisitor {
 
         @Override
         public boolean equals(Object other) {
-            return other instanceof IdentityWrapper && ((IdentityWrapper) other).obj == obj;
+            if (other == null || getClass() != other.getClass()) {
+                return false;
+            }
+            return ((IdentityWrapper) other).obj == obj;
         }
 
         @Override

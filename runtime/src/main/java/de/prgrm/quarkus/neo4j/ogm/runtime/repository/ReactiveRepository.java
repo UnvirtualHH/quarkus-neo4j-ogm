@@ -1,7 +1,9 @@
 package de.prgrm.quarkus.neo4j.ogm.runtime.repository;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 
 import org.neo4j.driver.Driver;
@@ -16,6 +18,7 @@ import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.EntityMapper;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.EntityWithRelations;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.ReactiveRelationLoader;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.RelationshipData;
+import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Filter;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Pageable;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Paged;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Sortable;
@@ -115,6 +118,14 @@ public abstract class ReactiveRepository<T> {
                 .flatMap(this::loadRelations);
     }
 
+    public Uni<Optional<T>> findByIdOptional(Object id) {
+        resetVisitor();
+        return runReadQuerySingle(null, "MATCH (n:" + label + " {id: $id}) RETURN n", Map.of("id", id))
+                .flatMap(this::loadRelations)
+                .map(Optional::ofNullable)
+                .onItem().ifNull().continueWith(Optional.empty());
+    }
+
     public Multi<T> findAll() {
         resetVisitor();
         return runReadQuery(null, "MATCH (n:" + label + ") RETURN n", Map.of())
@@ -186,6 +197,100 @@ public abstract class ReactiveRepository<T> {
                 .flatMap(saved -> persistRelationships(null, label, id, data.getRelationships()).replaceWith(saved));
     }
 
+    /**
+     * Batch create multiple entities in a single transaction using UNWIND for optimal performance.
+     * Relationships are NOT persisted in batch mode.
+     *
+     * @param entities the entities to create
+     * @return Uni with list of created entities
+     */
+    public Uni<List<T>> createAllBatch(List<T> entities) {
+        if (entities == null || entities.isEmpty()) {
+            return Uni.createFrom().item(List.of());
+        }
+
+        resetVisitor();
+        List<Map<String, Object>> propsList = new java.util.ArrayList<>();
+        for (T entity : entities) {
+            EntityWithRelations data = entityMapper.toDb(entity);
+            propsList.add(data.getProperties());
+        }
+
+        String cypher = "UNWIND $batch AS props CREATE (n:" + label + ") SET n = props RETURN n AS node";
+        return runQueryInternal(null, cypher, Map.of("batch", propsList), false)
+                .map(r -> entityMapper.map(r, resolveAlias(r)))
+                .collect().asList();
+    }
+
+    /**
+     * Create multiple entities with relationship persistence.
+     * Uses a single transaction but creates entities sequentially.
+     *
+     * @param entities the entities to create
+     * @return Uni with list of created entities
+     */
+    public Uni<List<T>> createAll(List<T> entities) {
+        if (entities == null || entities.isEmpty()) {
+            return Uni.createFrom().item(List.of());
+        }
+
+        resetVisitor();
+        return Multi.createFrom().iterable(entities)
+                .onItem().transformToUniAndConcatenate(this::create)
+                .collect().asList();
+    }
+
+    /**
+     * Batch delete multiple entities by their IDs in a single query.
+     *
+     * @param ids the IDs of entities to delete
+     * @return Uni<Void>
+     */
+    public Uni<Void> deleteAllByIds(List<Object> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return Uni.createFrom().voidItem();
+        }
+
+        List<String> idStrings = ids.stream()
+                .filter(id -> id != null)
+                .map(Object::toString)
+                .toList();
+
+        return runWriteQueryVoid(null,
+                "MATCH (n:" + label + ") WHERE n.id IN $ids DETACH DELETE n",
+                Map.of("ids", idStrings));
+    }
+
+    /**
+     * Batch merge multiple entities using UNWIND for optimal performance.
+     *
+     * @param entities the entities to merge
+     * @return Uni with list of merged entities
+     */
+    public Uni<List<T>> mergeAllBatch(List<T> entities) {
+        if (entities == null || entities.isEmpty()) {
+            return Uni.createFrom().item(List.of());
+        }
+
+        resetVisitor();
+        String idProp = entityMapper.getNodeIdPropertyName();
+        List<Map<String, Object>> propsList = new java.util.ArrayList<>();
+
+        for (T entity : entities) {
+            EntityWithRelations data = entityMapper.toDb(entity);
+            propsList.add(data.getProperties());
+        }
+
+        String cypher = "UNWIND $batch AS props " +
+                "MERGE (n:" + label + " {" + idProp + ": props." + idProp + "}) " +
+                "SET n += props " +
+                "RETURN n AS node";
+
+        return runQueryInternal(null, cypher, Map.of("batch", propsList), false)
+                .map(r -> entityMapper.map(r, resolveAlias(r)))
+                .collect().asList();
+    }
+
     private Uni<T> createInternal(EntityWithRelations entity) {
         return createInternal(null, entity);
     }
@@ -250,6 +355,91 @@ public abstract class ReactiveRepository<T> {
                 .flatMap(this::loadRelations);
     }
 
+    public Uni<Optional<T>> querySingleOptional(String cypher) {
+        return querySingleOptional(cypher, Map.of());
+    }
+
+    public Uni<Optional<T>> querySingleOptional(String cypher, Map<String, Object> params) {
+        resetVisitor();
+        return runReadQuerySingle(null, cypher, params)
+                .flatMap(this::loadRelations)
+                .map(Optional::ofNullable)
+                .onItem().ifNull().continueWith(Optional.empty());
+    }
+
+    public Multi<T> query(String cypher, Pageable pageable, Sortable sortable) {
+        return query(cypher, Map.of(), pageable, sortable);
+    }
+
+    public Multi<T> query(String cypher, Map<String, Object> parameters, Pageable pageable, Sortable sortable) {
+        resetVisitor();
+        String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
+        String pagedCypher = String.format("%s %s SKIP $skip LIMIT $limit", cypher, sortClause);
+        Map<String, Object> params = new HashMap<>(parameters);
+        params.put("skip", pageable.page() * pageable.size());
+        params.put("limit", pageable.size());
+        return runReadQuery(null, pagedCypher, params)
+                .onItem().transformToUniAndMerge(this::loadRelations);
+    }
+
+    public Uni<Paged<T>> queryPaged(String baseCypher, Filter filter, Pageable pageable, Sortable sortable) {
+        return queryPaged(baseCypher, filter, Map.of(), pageable, sortable);
+    }
+
+    public Uni<Paged<T>> queryPaged(String baseCypher, Filter filter, Map<String, Object> parameters,
+            Pageable pageable, Sortable sortable) {
+        resetVisitor();
+        Filter.CypherFragment frag = (filter != null) ? filter.toCypher("n") : new Filter.CypherFragment("", Map.of());
+        String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
+
+        Map<String, Object> allParams = new HashMap<>(parameters);
+        allParams.putAll(frag.params());
+        allParams.put("skip", pageable.page() * pageable.size());
+        allParams.put("limit", pageable.size());
+
+        // Single combined query for both count and content
+        String countCypher = String.format("%s %s RETURN count(n) AS count", baseCypher, frag.clause());
+        String pagedCypher = String.format("%s %s RETURN n AS node %s SKIP $skip LIMIT $limit",
+                baseCypher, frag.clause(), sortClause);
+
+        Uni<Long> countUni = runScalarReadQuery(null, countCypher, allParams, r -> r.get("count").asLong());
+        Uni<List<T>> contentUni = runReadQuery(null, pagedCypher, allParams)
+                .onItem().transformToUniAndMerge(this::loadRelations)
+                .collect().asList();
+
+        return Uni.combine().all().unis(contentUni, countUni)
+                .asTuple()
+                .map(tuple -> new Paged<>(
+                        tuple.getItem1(),
+                        tuple.getItem2(),
+                        pageable.page(),
+                        pageable.size()));
+    }
+
+    public Uni<Paged<T>> queryPaged(String baseCypher, Map<String, Object> parameters, Pageable pageable, Sortable sortable) {
+        resetVisitor();
+        String sortClause = (sortable != null) ? sortable.toCypher("n") : "";
+        Map<String, Object> allParams = new HashMap<>(parameters);
+        allParams.put("skip", pageable.page() * pageable.size());
+        allParams.put("limit", pageable.size());
+
+        String countCypher = baseCypher + " RETURN count(n) AS count";
+        String pagedCypher = baseCypher + " RETURN n AS node " + sortClause + " SKIP $skip LIMIT $limit";
+
+        Uni<Long> countUni = runScalarReadQuery(null, countCypher, parameters, r -> r.get("count").asLong());
+        Uni<List<T>> contentUni = runReadQuery(null, pagedCypher, allParams)
+                .onItem().transformToUniAndMerge(this::loadRelations)
+                .collect().asList();
+
+        return Uni.combine().all().unis(contentUni, countUni)
+                .asTuple()
+                .map(tuple -> new Paged<>(
+                        tuple.getItem1(),
+                        tuple.getItem2(),
+                        pageable.page(),
+                        pageable.size()));
+    }
+
     public <R> Uni<R> queryScalar(String cypher, Function<Record, R> mapper) {
         return queryScalar(null, cypher, Map.of(), mapper);
     }
@@ -312,12 +502,12 @@ public abstract class ReactiveRepository<T> {
 
     public Uni<Void> deleteById(ReactiveTxContext ctx, Object id) {
         resetVisitor();
-        return runWriteQueryVoid(ctx, "MATCH (n:" + label + " {id: $id}) DELETE n", Map.of("id", id));
+        return runWriteQueryVoid(ctx, "MATCH (n:" + label + " {id: $id}) DETACH DELETE n", Map.of("id", id.toString()));
     }
 
     public Uni<Boolean> existsById(ReactiveTxContext ctx, Object id) {
         return runScalarReadQuery(ctx, "MATCH (n:" + label + " {id: $id}) RETURN count(n) > 0 AS exists",
-                Map.of("id", id), r -> r.get("exists").asBoolean());
+                Map.of("id", id.toString()), r -> r.get("exists").asBoolean());
     }
 
     public Multi<T> query(ReactiveTxContext ctx, String cypher, Map<String, Object> params) {

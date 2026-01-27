@@ -17,12 +17,17 @@ public class ReactiveTransactionalInterceptor {
     ReactiveTransactionManager txManager;
 
     @AroundInvoke
+    @SuppressWarnings("unchecked")
     public Object around(InvocationContext ctx) throws Exception {
         Object result = ctx.proceed();
-        if (!(result instanceof Uni<?> uni)) {
+
+        // Check if result is Uni using class hierarchy instead of instanceof
+        Class<?> resultClass = result != null ? result.getClass() : null;
+        if (resultClass == null || !Uni.class.isAssignableFrom(resultClass)) {
             return result;
         }
 
+        Uni<?> uni = (Uni<?>) result;
         return txManager.begin()
                 .flatMap(txCtx -> uni
                         .onItem().transformToUni(item -> txManager.commit(txCtx).replaceWith(item))
