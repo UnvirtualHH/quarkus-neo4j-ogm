@@ -1,11 +1,14 @@
 package de.prgrm.quarkus.neo4j.ogm.runtime.repository;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 
+import org.jboss.logging.Logger;
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.Record;
 import org.neo4j.driver.Values;
@@ -32,6 +35,8 @@ import io.smallrye.mutiny.Uni;
  */
 public abstract class ReactiveRepository<T> {
 
+    private static final Logger LOG = Logger.getLogger(ReactiveRepository.class);
+
     protected final Driver driver;
     protected final String label;
     protected final EntityMapper<T> entityMapper;
@@ -43,7 +48,11 @@ public abstract class ReactiveRepository<T> {
     /** Shared visitor context across traversal */
     protected ReactiveRelationVisitor.VisitorContext visitorContext;
 
-    public ReactiveRepository() {
+    /**
+     * No-args constructor for CDI proxy generation only.
+     * Do not use directly - use the constructor with dependencies.
+     */
+    protected ReactiveRepository() {
         this.driver = null;
         this.label = null;
         this.entityMapper = null;
@@ -112,15 +121,29 @@ public abstract class ReactiveRepository<T> {
     // Public Repository API (non-transactional: open/close per call)
     // ----------------------------------------------------------
 
+    /**
+     * Converts an ID object to a value suitable for Neo4j queries.
+     * All ID types (UUID, String, Long, etc.) are converted via toString().
+     *
+     * @param id the ID object
+     * @return the ID as a string representation
+     */
+    protected String convertIdToString(Object id) {
+        if (id == null) {
+            return null;
+        }
+        return id.toString();
+    }
+
     public Uni<T> findById(Object id) {
         resetVisitor();
-        return runReadQuerySingle(null, "MATCH (n:" + label + " {id: $id}) RETURN n", Map.of("id", id))
+        return runReadQuerySingle(null, "MATCH (n:" + label + " {id: $id}) RETURN n", Map.of("id", convertIdToString(id)))
                 .flatMap(this::loadRelations);
     }
 
     public Uni<Optional<T>> findByIdOptional(Object id) {
         resetVisitor();
-        return runReadQuerySingle(null, "MATCH (n:" + label + " {id: $id}) RETURN n", Map.of("id", id))
+        return runReadQuerySingle(null, "MATCH (n:" + label + " {id: $id}) RETURN n", Map.of("id", convertIdToString(id)))
                 .flatMap(this::loadRelations)
                 .map(Optional::ofNullable)
                 .onItem().ifNull().continueWith(Optional.empty());
@@ -253,7 +276,7 @@ public abstract class ReactiveRepository<T> {
 
         List<String> idStrings = ids.stream()
                 .filter(id -> id != null)
-                .map(Object::toString)
+                .map(this::convertIdToString)
                 .toList();
 
         return runWriteQueryVoid(null,
@@ -502,12 +525,12 @@ public abstract class ReactiveRepository<T> {
 
     public Uni<Void> deleteById(ReactiveTxContext ctx, Object id) {
         resetVisitor();
-        return runWriteQueryVoid(ctx, "MATCH (n:" + label + " {id: $id}) DETACH DELETE n", Map.of("id", id.toString()));
+        return runWriteQueryVoid(ctx, "MATCH (n:" + label + " {id: $id}) DETACH DELETE n", Map.of("id", convertIdToString(id)));
     }
 
     public Uni<Boolean> existsById(ReactiveTxContext ctx, Object id) {
         return runScalarReadQuery(ctx, "MATCH (n:" + label + " {id: $id}) RETURN count(n) > 0 AS exists",
-                Map.of("id", id.toString()), r -> r.get("exists").asBoolean());
+                Map.of("id", convertIdToString(id)), r -> r.get("exists").asBoolean());
     }
 
     public Multi<T> query(ReactiveTxContext ctx, String cypher, Map<String, Object> params) {
@@ -602,7 +625,7 @@ public abstract class ReactiveRepository<T> {
         return session -> Uni.createFrom().publisher(session.close())
                 .replaceWithVoid()
                 .onFailure()
-                .invoke(throwable -> System.err.println("Failed to close Neo4j session: " + throwable.getMessage()));
+                .invoke(throwable -> LOG.error("Failed to close Neo4j session", throwable));
     }
 
     // -------- Read (list) --------
@@ -719,60 +742,44 @@ public abstract class ReactiveRepository<T> {
                         return Uni.createFrom().voidItem();
                     }
 
-                    return Multi.createFrom().iterable(relationships)
-                            .onItem().transformToUniAndMerge(rel -> {
-                                if (rel.getMode() == de.prgrm.quarkus.neo4j.ogm.runtime.enums.RelationshipMode.FETCH_ONLY) {
-                                    return Uni.createFrom().voidItem();
-                                }
+                    // First, delete all existing relationships of the types we're about to persist
+                    // This ensures removed relationships are properly detached
+                    Set<String> relationshipTypes = new HashSet<>();
+                    for (RelationshipData rel : relationships) {
+                        if (rel.getMode() != de.prgrm.quarkus.neo4j.ogm.runtime.enums.RelationshipMode.FETCH_ONLY) {
+                            relationshipTypes.add(rel.getType() + "_" + rel.getDirection());
+                        }
+                    }
 
-                                EntityWithRelations target = rel.getTarget();
-                                if (target == null) {
-                                    return Uni.createFrom().voidItem();
-                                }
+                    return Multi.createFrom().iterable(relationshipTypes)
+                            .onItem().transformToUniAndMerge(typeKey -> {
+                                String[] parts = typeKey.split("_");
+                                String relType = parts[0];
+                                String direction = parts[1];
 
-                                @SuppressWarnings("unchecked")
-                                ReactiveRepository<Object> targetRepo = (ReactiveRepository<Object>) reactiveRegistry
-                                        .getReactiveRepository(target.getEntityType());
+                                String deleteQuery = switch (direction) {
+                                    case "OUTGOING" ->
+                                        "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]->() DELETE r";
+                                    case "INCOMING" ->
+                                        "MATCH (n:" + sourceLabel + " {id: $id})<-[r:" + relType + "]-() DELETE r";
+                                    case "UNDIRECTED" ->
+                                        "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]-() DELETE r";
+                                    case "BOTH" ->
+                                        // For BOTH direction, delete both outgoing and incoming relationships
+                                        "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]-() DELETE r";
+                                    default -> null;
+                                };
 
-                                if (targetRepo == null) {
-                                    return Uni.createFrom().voidItem();
-                                }
-
-                                targetRepo.setVisitorContext(visitorContext); // share visitor context
-
-                                String idPropertyName = targetRepo.getEntityMapper().getNodeIdPropertyName();
-                                Object targetEntityId = target.getProperties().get(idPropertyName);
-
-                                if (targetEntityId != null) {
-                                    return relationVisitor.wasPersisted(targetRepo.label, targetEntityId, visitorContext)
-                                            .flatMap(wasPersisted -> {
-                                                if (!wasPersisted) {
-                                                    return targetRepo.createInternal(ctx, target)
-                                                            .invoke(saved -> {
-                                                                Object id = targetRepo.getEntityMapper().getNodeId(saved);
-                                                                rel.setTargetId(id);
-                                                            })
-                                                            .replaceWithVoid();
-                                                } else {
-                                                    // Entity bereits persistiert -> verwende nur die ID
-                                                    rel.setTargetId(targetEntityId);
-                                                    return Uni.createFrom().voidItem();
-                                                }
-                                            });
+                                if (deleteQuery != null) {
+                                    return runWriteQueryVoid(ctx, deleteQuery, Map.of("id", convertIdToString(fromId)));
                                 } else {
-                                    return targetRepo.createInternal(ctx, target)
-                                            .invoke(saved -> {
-                                                Object id = targetRepo.getEntityMapper().getNodeId(saved);
-                                                rel.setTargetId(id);
-                                            })
-                                            .replaceWithVoid();
+                                    return Uni.createFrom().voidItem();
                                 }
                             })
                             .collect().asList()
                             .flatMap(ignore -> Multi.createFrom().iterable(relationships)
                                     .onItem().transformToUniAndMerge(rel -> {
-                                        Object toId = rel.getTargetId();
-                                        if (toId == null) {
+                                        if (rel.getMode() == de.prgrm.quarkus.neo4j.ogm.runtime.enums.RelationshipMode.FETCH_ONLY) {
                                             return Uni.createFrom().voidItem();
                                         }
 
@@ -789,37 +796,90 @@ public abstract class ReactiveRepository<T> {
                                             return Uni.createFrom().voidItem();
                                         }
 
-                                        String targetLabel = targetRepo.label;
+                                        targetRepo.setVisitorContext(visitorContext); // share visitor context
 
-                                        Map<String, Object> params = Map.of(
-                                                "from", fromId.toString(),
-                                                "to", toId.toString());
+                                        String idPropertyName = targetRepo.getEntityMapper().getNodeIdPropertyName();
+                                        Object targetEntityId = target.getProperties().get(idPropertyName);
 
-                                        String query = switch (rel.getDirection()) {
-                                            case OUTGOING ->
-                                                "MATCH (a:" + sourceLabel + " {id: $from}), " +
-                                                        "      (b:" + targetLabel + " {id: $to}) " +
-                                                        "MERGE (a)-[:" + rel.getType() + "]->(b)";
-                                            case INCOMING ->
-                                                "MATCH (a:" + sourceLabel + " {id: $from}), " +
-                                                        "      (b:" + targetLabel + " {id: $to}) " +
-                                                        "MERGE (a)<-[:" + rel.getType() + "]-(b)";
-                                            case UNDIRECTED ->
-                                                "MATCH (a:" + sourceLabel + " {id: $from}), " +
-                                                        "      (b:" + targetLabel + " {id: $to}) " +
-                                                        "MERGE (a)-[:" + rel.getType() + "]-(b)";
-                                            case BOTH ->
-                                                throw new UnsupportedOperationException(
-                                                        "BOTH direction not yet implemented for reactive");
-                                            default ->
-                                                throw new UnsupportedOperationException(
-                                                        "Unsupported direction: " + rel.getDirection());
-                                        };
-
-                                        return runWriteQueryVoid(ctx, query, params);
+                                        if (targetEntityId != null) {
+                                            return relationVisitor
+                                                    .wasPersisted(targetRepo.label, targetEntityId, visitorContext)
+                                                    .flatMap(wasPersisted -> {
+                                                        if (!wasPersisted) {
+                                                            return targetRepo.createInternal(ctx, target)
+                                                                    .invoke(saved -> {
+                                                                        Object id = targetRepo.getEntityMapper()
+                                                                                .getNodeId(saved);
+                                                                        rel.setTargetId(id);
+                                                                    })
+                                                                    .replaceWithVoid();
+                                                        } else {
+                                                            // Entity bereits persistiert -> verwende nur die ID
+                                                            rel.setTargetId(targetEntityId);
+                                                            return Uni.createFrom().voidItem();
+                                                        }
+                                                    });
+                                        } else {
+                                            return targetRepo.createInternal(ctx, target)
+                                                    .invoke(saved -> {
+                                                        Object id = targetRepo.getEntityMapper().getNodeId(saved);
+                                                        rel.setTargetId(id);
+                                                    })
+                                                    .replaceWithVoid();
+                                        }
                                     })
                                     .collect().asList()
-                                    .replaceWithVoid());
+                                    .flatMap(ignored -> Multi.createFrom().iterable(relationships)
+                                            .onItem().transformToUniAndMerge(rel -> {
+                                                Object toId = rel.getTargetId();
+                                                if (toId == null) {
+                                                    return Uni.createFrom().voidItem();
+                                                }
+
+                                                EntityWithRelations target = rel.getTarget();
+                                                if (target == null) {
+                                                    return Uni.createFrom().voidItem();
+                                                }
+
+                                                @SuppressWarnings("unchecked")
+                                                ReactiveRepository<Object> targetRepo = (ReactiveRepository<Object>) reactiveRegistry
+                                                        .getReactiveRepository(target.getEntityType());
+
+                                                if (targetRepo == null) {
+                                                    return Uni.createFrom().voidItem();
+                                                }
+
+                                                String targetLabel = targetRepo.label;
+
+                                                Map<String, Object> params = Map.of(
+                                                        "from", fromId.toString(),
+                                                        "to", toId.toString());
+
+                                                String query = switch (rel.getDirection()) {
+                                                    case OUTGOING ->
+                                                        "MATCH (a:" + sourceLabel + " {id: $from}), " +
+                                                                "      (b:" + targetLabel + " {id: $to}) " +
+                                                                "MERGE (a)-[:" + rel.getType() + "]->(b)";
+                                                    case INCOMING ->
+                                                        "MATCH (a:" + sourceLabel + " {id: $from}), " +
+                                                                "      (b:" + targetLabel + " {id: $to}) " +
+                                                                "MERGE (a)<-[:" + rel.getType() + "]-(b)";
+                                                    case UNDIRECTED ->
+                                                        "MATCH (a:" + sourceLabel + " {id: $from}), " +
+                                                                "      (b:" + targetLabel + " {id: $to}) " +
+                                                                "MERGE (a)-[:" + rel.getType() + "]-(b)";
+                                                    case BOTH ->
+                                                        throw new UnsupportedOperationException(
+                                                                "BOTH direction not yet implemented for reactive");
+                                                    default ->
+                                                        throw new UnsupportedOperationException(
+                                                                "Unsupported direction: " + rel.getDirection());
+                                                };
+
+                                                return runWriteQueryVoid(ctx, query, params);
+                                            })
+                                            .collect().asList()
+                                            .replaceWithVoid()));
                 });
     }
 

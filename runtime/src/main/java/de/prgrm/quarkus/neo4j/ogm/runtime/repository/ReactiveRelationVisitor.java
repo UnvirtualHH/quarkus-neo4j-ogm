@@ -18,6 +18,7 @@ import io.smallrye.mutiny.Uni;
 public class ReactiveRelationVisitor {
 
     private static final Map<Class<?>, List<RelationshipInfo>> RELATIONSHIP_CACHE = new ConcurrentHashMap<>();
+    private static final Map<Class<?>, IdAccessor> ID_ACCESSOR_CACHE = new ConcurrentHashMap<>();
     private static final int DEFAULT_MAX_DEPTH = 5;
 
     public ReactiveRelationVisitor() {
@@ -134,24 +135,50 @@ public class ReactiveRelationVisitor {
 
     // -------------------- Helpers --------------------
 
+    /**
+     * Functional interface for cached ID access
+     */
+    @FunctionalInterface
+    private interface IdAccessor {
+        Object extractId(Object entity) throws Exception;
+    }
+
     private Object extractEntityId(Object entity) {
+        if (entity == null)
+            return null;
+
         try {
             Class<?> clazz = entity.getClass();
-            for (String fieldName : new String[] { "id", "ID", "_id", "entityId" }) {
-                try {
-                    Field field = clazz.getDeclaredField(fieldName);
-                    field.setAccessible(true);
-                    return field.get(entity);
-                } catch (NoSuchFieldException ignored) {
+
+            // Use cached accessor for performance
+            IdAccessor accessor = ID_ACCESSOR_CACHE.computeIfAbsent(clazz, c -> {
+                // Try common ID field names
+                for (String fieldName : new String[] { "id", "ID", "_id", "entityId" }) {
+                    try {
+                        Field field = c.getDeclaredField(fieldName);
+                        field.setAccessible(true);
+                        return field::get; // Cache field accessor
+                    } catch (NoSuchFieldException ignored) {
+                    }
                 }
-            }
-            try {
-                return clazz.getMethod("getId").invoke(entity);
-            } catch (NoSuchMethodException ignored) {
-            }
+
+                // Try getId() method
+                try {
+                    var method = c.getMethod("getId");
+                    return method::invoke; // Cache method accessor
+                } catch (NoSuchMethodException ignored) {
+                }
+
+                // Return null accessor if no ID field/method found
+                return e -> null;
+            });
+
+            return accessor.extractId(entity);
+
         } catch (Exception e) {
             // ignore
         }
+
         return null;
     }
 

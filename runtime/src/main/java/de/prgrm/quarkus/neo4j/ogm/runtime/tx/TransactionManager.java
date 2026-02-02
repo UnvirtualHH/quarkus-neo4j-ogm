@@ -89,25 +89,37 @@ public class TransactionManager {
 
     private void cleanup(Session session) {
         Transaction tx = CURRENT_TX.get();
-        CURRENT_TX.remove();
-        CURRENT_SESSION.remove();
 
         try {
-            if (tx != null && tx.isOpen()) {
-                log("WARNING: TX still open during cleanup");
-                tx.close();
-            }
-        } catch (Exception e) {
-            log("TX CLOSE FAILED: " + e.getMessage());
-        }
+            // Always remove ThreadLocal first to prevent memory leaks
+            CURRENT_TX.remove();
+            CURRENT_SESSION.remove();
 
-        try {
-            if (session != null && session.isOpen()) {
-                session.close();
-                log("SESSION CLOSED");
+            try {
+                if (tx != null && tx.isOpen()) {
+                    log("WARNING: TX still open during cleanup");
+                    tx.close();
+                }
+            } catch (Exception e) {
+                log("TX CLOSE FAILED: " + e.getMessage());
+            }
+
+            try {
+                if (session != null && session.isOpen()) {
+                    session.close();
+                    log("SESSION CLOSED");
+                }
+            } catch (Exception e) {
+                log("SESSION CLOSE FAILED: " + e.getMessage());
             }
         } catch (Exception e) {
-            log("SESSION CLOSE FAILED: " + e.getMessage());
+            // Ensure ThreadLocal is cleaned even if remove() fails
+            try {
+                CURRENT_TX.remove();
+                CURRENT_SESSION.remove();
+            } catch (Exception ignored) {
+            }
+            throw e;
         }
     }
 

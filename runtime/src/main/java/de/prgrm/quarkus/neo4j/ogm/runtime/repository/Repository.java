@@ -30,7 +30,11 @@ public abstract class Repository<T> {
     protected final RelationVisitor relationVisitor;
     protected final TransactionManager txManager;
 
-    public Repository() {
+    /**
+     * No-args constructor for CDI proxy generation only.
+     * Do not use directly - use the constructor with dependencies.
+     */
+    protected Repository() {
         this.driver = null;
         this.label = null;
         this.entityMapper = null;
@@ -127,6 +131,22 @@ public abstract class Repository<T> {
         }
     }
 
+    // ========================= Helper Methods =========================
+
+    /**
+     * Converts an ID object to a value suitable for Neo4j queries.
+     * All ID types (UUID, String, Long, etc.) are converted via toString().
+     *
+     * @param id the ID object
+     * @return the ID as a string representation
+     */
+    protected String convertIdToString(Object id) {
+        if (id == null) {
+            return null;
+        }
+        return id.toString();
+    }
+
     // ========================= Core Repository Methods =========================
 
     public T findById(Object id) {
@@ -134,7 +154,7 @@ public abstract class Repository<T> {
             return inReadTx(tx -> {
                 var result = tx.run(
                         "MATCH (n:" + label + " {id: $id}) RETURN n AS node",
-                        Values.parameters("id", id.toString()));
+                        Values.parameters("id", convertIdToString(id)));
 
                 if (!result.hasNext()) {
                     throw new NotFoundRepositoryException(
@@ -156,7 +176,7 @@ public abstract class Repository<T> {
             return inReadTx(tx -> {
                 var result = tx.run(
                         "MATCH (n:" + label + " {id: $id}) RETURN n AS node",
-                        Values.parameters("id", id.toString()));
+                        Values.parameters("id", convertIdToString(id)));
 
                 if (!result.hasNext()) {
                     return Optional.empty();
@@ -354,7 +374,7 @@ public abstract class Repository<T> {
         try {
             List<String> idStrings = ids.stream()
                     .filter(id -> id != null)
-                    .map(Object::toString)
+                    .map(this::convertIdToString)
                     .toList();
 
             inWriteTxVoid(tx -> tx.run(
@@ -450,7 +470,7 @@ public abstract class Repository<T> {
 
                 var result = tx.run(
                         "MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n AS node",
-                        Values.parameters("id", id.toString(), "props", data.getProperties()));
+                        Values.parameters("id", convertIdToString(id), "props", data.getProperties()));
 
                 if (!result.hasNext()) {
                     throw new NotFoundRepositoryException(
@@ -482,7 +502,7 @@ public abstract class Repository<T> {
                                 "SET n += $props " +
                                 "RETURN n AS node",
                         Values.parameters(
-                                "id", id.toString(),
+                                "id", convertIdToString(id),
                                 "props", data.getProperties()));
 
                 if (!result.hasNext()) {
@@ -512,7 +532,9 @@ public abstract class Repository<T> {
             if (id == null)
                 throw new IllegalArgumentException("ID cannot be null");
             inWriteTxVoid(
-                    tx -> tx.run("MATCH (n:" + label + " {id: $id}) DETACH DELETE n", Values.parameters("id", id.toString())).consume());
+                    tx -> tx.run("MATCH (n:" + label + " {id: $id}) DETACH DELETE n",
+                            Values.parameters("id", convertIdToString(id)))
+                            .consume());
         } finally {
             if (relationVisitor != null)
                 relationVisitor.reset();
@@ -523,7 +545,7 @@ public abstract class Repository<T> {
         try {
             return inReadTx(tx -> {
                 var result = tx.run("MATCH (n:" + label + " {id: $id}) RETURN count(n) > 0 AS exists",
-                        Values.parameters("id", id.toString()));
+                        Values.parameters("id", convertIdToString(id)));
                 return result.single().get("exists").asBoolean();
             });
         } finally {
@@ -803,6 +825,41 @@ public abstract class Repository<T> {
             return;
         }
 
+        // First, delete all existing relationships of the types we're about to persist
+        // This ensures removed relationships are properly detached
+        Set<String> relationshipTypes = new HashSet<>();
+        for (RelationshipData rel : relationships) {
+            if (rel.getMode() != RelationshipMode.FETCH_ONLY) {
+                relationshipTypes.add(rel.getType() + "_" + rel.getDirection());
+            }
+        }
+
+        for (String typeKey : relationshipTypes) {
+            String[] parts = typeKey.split("_");
+            String relType = parts[0];
+            String direction = parts[1];
+
+            String deleteQuery = switch (direction) {
+                case "OUTGOING" ->
+                    "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]->() DELETE r";
+                case "INCOMING" ->
+                    "MATCH (n:" + sourceLabel + " {id: $id})<-[r:" + relType + "]-() DELETE r";
+                case "UNDIRECTED" ->
+                    "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]-() DELETE r";
+                case "BOTH" -> {
+                    // Delete both directions
+                    tx.run("MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]->() DELETE r",
+                            Values.parameters("id", convertIdToString(fromId)));
+                    yield "MATCH (n:" + sourceLabel + " {id: $id})<-[r:" + relType + "]-() DELETE r";
+                }
+                default -> null;
+            };
+
+            if (deleteQuery != null) {
+                tx.run(deleteQuery, Values.parameters("id", convertIdToString(fromId)));
+            }
+        }
+
         for (RelationshipData rel : relationships) {
 
             if (rel.getMode() == RelationshipMode.FETCH_ONLY) {
@@ -906,6 +963,9 @@ public abstract class Repository<T> {
     // ========================= Alias Resolution Helper =========================
 
     protected String resolveAlias(Record rec) {
-        return rec.keys().isEmpty() ? "node" : rec.keys().getFirst();
+        if (rec == null || rec.keys().isEmpty()) {
+            return "node";
+        }
+        return rec.keys().getFirst();
     }
 }

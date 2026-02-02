@@ -53,10 +53,10 @@
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
-        <compiler-plugin.version>3.14.1</compiler-plugin.version>
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        <quarkus.version>3.31.1</quarkus.version>
+        <quarkus.version>3.30.6</quarkus.version>
         <javapoet.version>0.7.0</javapoet.version>
         <quarkus.neo4j.version>6.2.0</quarkus.neo4j.version>
     </properties>
@@ -103,7 +103,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
-                    <version>3.14.1</version>
+                    <version>3.15.0</version>
                     <configuration>
                         <parameters>true</parameters>
                     </configuration>

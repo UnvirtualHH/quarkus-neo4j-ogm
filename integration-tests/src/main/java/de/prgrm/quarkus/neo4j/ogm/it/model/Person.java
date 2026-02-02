@@ -8,6 +8,10 @@ import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.*;
 
 @NodeEntity(label = "Person")
 @GenerateRepository(GenerateRepository.RepositoryType.BOTH)
+@Queries({
+        @Query(name = "findByUUID", cypher = "MATCH (p:Person {id: $personId}) RETURN p", paramTypes = {
+                @Query.Param(name = "personId", type = UUID.class) })
+})
 public class Person {
 
     @NodeId

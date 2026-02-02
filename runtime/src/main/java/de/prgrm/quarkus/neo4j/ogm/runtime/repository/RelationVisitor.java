@@ -6,6 +6,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import jakarta.enterprise.context.ApplicationScoped;
 
+import org.jboss.logging.Logger;
+
 import de.prgrm.quarkus.neo4j.ogm.runtime.enums.Direction;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.Relationship;
 
@@ -16,6 +18,8 @@ import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.Relationship;
 @ApplicationScoped
 public class RelationVisitor {
 
+    private static final Logger LOG = Logger.getLogger(RelationVisitor.class);
+
     /**
      * ThreadLocal context for each traversal operation (thread-safe)
      */
@@ -25,6 +29,11 @@ public class RelationVisitor {
      * Cache for relationship metadata per entity class
      */
     private static final Map<Class<?>, List<RelationshipInfo>> RELATIONSHIP_CACHE = new ConcurrentHashMap<>();
+
+    /**
+     * Cache for ID field/method accessors per entity class (performance optimization)
+     */
+    private static final Map<Class<?>, IdAccessor> ID_ACCESSOR_CACHE = new ConcurrentHashMap<>();
 
     /**
      * Default max depth (can be overridden per relation via @Relationship)
@@ -53,7 +62,7 @@ public class RelationVisitor {
         if (currentDepth > context.maxDepth) {
             context.stats.depthLimitHits++;
             if (context.debug) {
-                System.out.printf("Skip visiting %s at depth %d (depth limit=%d)%n",
+                LOG.debugf("Skip visiting %s at depth %d (depth limit=%d)",
                         entity.getClass().getSimpleName(), currentDepth, context.maxDepth);
             }
             return false;
@@ -63,7 +72,7 @@ public class RelationVisitor {
         if (entityId != null && context.visitedIds.contains(entityId)) {
             context.stats.circularReferencesPrevented++;
             if (context.debug) {
-                System.out.printf("Skip circular visit of %s[id=%s]%n",
+                LOG.debugf("Skip circular visit of %s[id=%s]",
                         entity.getClass().getSimpleName(), entityId);
             }
             return false;
@@ -75,7 +84,7 @@ public class RelationVisitor {
             if (context.visitedObjects.contains(wrapper)) {
                 context.stats.circularReferencesPrevented++;
                 if (context.debug) {
-                    System.out.printf("Skip circular visit of %s (object identity)%n",
+                    LOG.debugf("Skip circular visit of %s (object identity)",
                             entity.getClass().getSimpleName());
                 }
                 return false;
@@ -96,7 +105,7 @@ public class RelationVisitor {
                 if (currentDepth >= info.maxDepth) {
                     CONTEXT.get().stats.depthLimitHits++;
                     if (CONTEXT.get().debug) {
-                        System.out.printf("Skip loading relation %s.%s at depth %d (maxDepth=%d)%n",
+                        LOG.debugf("Skip loading relation %s.%s at depth %d (maxDepth=%d)",
                                 entity.getClass().getSimpleName(), fieldName, currentDepth, info.maxDepth);
                     }
                     return false;
@@ -226,22 +235,31 @@ public class RelationVisitor {
         try {
             Class<?> clazz = entity.getClass();
 
-            // Common ID field names
-            String[] idFieldNames = { "id", "ID", "_id", "entityId" };
-            for (String fieldName : idFieldNames) {
-                try {
-                    Field field = clazz.getDeclaredField(fieldName);
-                    field.setAccessible(true);
-                    return field.get(entity);
-                } catch (NoSuchFieldException ignored) {
+            // Use cached accessor for performance
+            IdAccessor accessor = ID_ACCESSOR_CACHE.computeIfAbsent(clazz, c -> {
+                // Try common ID field names
+                String[] idFieldNames = { "id", "ID", "_id", "entityId" };
+                for (String fieldName : idFieldNames) {
+                    try {
+                        Field field = c.getDeclaredField(fieldName);
+                        field.setAccessible(true);
+                        return field::get; // Cache field accessor
+                    } catch (NoSuchFieldException ignored) {
+                    }
                 }
-            }
 
-            // Try getId() method
-            try {
-                return clazz.getMethod("getId").invoke(entity);
-            } catch (NoSuchMethodException ignored) {
-            }
+                // Try getId() method
+                try {
+                    var method = c.getMethod("getId");
+                    return method::invoke; // Cache method accessor
+                } catch (NoSuchMethodException ignored) {
+                }
+
+                // Return null accessor if no ID field/method found
+                return e -> null;
+            });
+
+            return accessor.extractId(entity);
 
         } catch (Exception e) {
             // ignore
@@ -268,6 +286,14 @@ public class RelationVisitor {
     }
 
     // ========================= Inner Classes =========================
+
+    /**
+     * Functional interface for cached ID access
+     */
+    @FunctionalInterface
+    private interface IdAccessor {
+        Object extractId(Object entity) throws Exception;
+    }
 
     private static class VisitorContext {
         final Set<Object> visitedIds = ConcurrentHashMap.newKeySet();
