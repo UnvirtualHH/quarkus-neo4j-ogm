@@ -30,28 +30,21 @@ public class InstantTypeHandler implements TypeHandler {
 
         return CodeBlock.of(
                 """
-                        if ($L.get($S) != null && !$L.get($S).isNull()) {
-                          var val = $L.get($S);
-                          try {
-                            if ("STRING".equals(val.type().name())) {
-                              $L.$L(java.time.Instant.parse(val.asString()));
-                            } else {
-                              $L.$L(val.asZonedDateTime().toInstant());
-                            }
-                          } catch (Exception ex) {
-                            throw new RuntimeException("Failed to parse Instant for property '" + $S + "': " + val + " (" + val.type().name() + ")", ex);
+                        var val = $L.get($S);
+                        try {
+                          if ("STRING".equals(val.type().name())) {
+                            $L.$L(java.time.Instant.parse(val.asString()));
+                          } else {
+                            $L.$L(val.asZonedDateTime().toInstant());
                           }
-                        } else {
-                          $L.$L(null);
+                        } catch (Exception ex) {
+                          throw new RuntimeException("Failed to parse Instant for property '" + $S + "': " + val + " (" + val.type().name() + ")", ex);
                         }
                         """,
                 valueSource, property,
-                valueSource, property,
-                valueSource, property,
                 targetVar, setter,
                 targetVar, setter,
-                property,
-                targetVar, setter);
+                property);
     }
 
     @Override

@@ -164,6 +164,7 @@ public abstract class Repository<T> {
                 Record rec = result.next();
                 T entity = entityMapper.map(rec, resolveAlias(rec));
                 loadRelations(entity, 0);
+                entityMapper.applyPostLoadConverters(entity);
                 return entity;
             });
         } finally {
@@ -185,6 +186,7 @@ public abstract class Repository<T> {
                 Record rec = result.next();
                 T entity = entityMapper.map(rec, resolveAlias(rec));
                 loadRelations(entity, 0);
+                entityMapper.applyPostLoadConverters(entity);
                 return Optional.of(entity);
             });
         } finally {
@@ -200,7 +202,10 @@ public abstract class Repository<T> {
                     String alias = resolveAlias(rec);
                     return entityMapper.map(rec, alias);
                 });
-                entities.forEach(e -> loadRelations(e, 0));
+                entities.forEach(e -> {
+                    loadRelations(e, 0);
+                    entityMapper.applyPostLoadConverters(e);
+                });
                 return entities;
             });
         } finally {
@@ -220,7 +225,10 @@ public abstract class Repository<T> {
                     String alias = resolveAlias(rec);
                     return entityMapper.map(rec, alias);
                 });
-                entities.forEach(e -> loadRelations(e, 0));
+                entities.forEach(e -> {
+                    loadRelations(e, 0);
+                    entityMapper.applyPostLoadConverters(e);
+                });
                 return entities;
             });
         } finally {
@@ -248,7 +256,10 @@ public abstract class Repository<T> {
                     String alias = resolveAlias(rec);
                     return entityMapper.map(rec, alias);
                 });
-                entities.forEach(e -> loadRelations(e, 0));
+                entities.forEach(e -> {
+                    loadRelations(e, 0);
+                    entityMapper.applyPostLoadConverters(e);
+                });
 
                 return new Paged<>(entities, total, pageable.page(), pageable.size());
             });
@@ -464,6 +475,7 @@ public abstract class Repository<T> {
             throw new IllegalArgumentException("Entity ID must not be null");
         }
 
+        resetVisitor(); // Reset visitor context before update to allow relationship updates
         try {
             return inWriteTx(tx -> {
                 EntityWithRelations data = entityMapper.toDb(entity);
@@ -493,6 +505,7 @@ public abstract class Repository<T> {
             throw new IllegalArgumentException("Entity ID cannot be null");
         }
 
+        resetVisitor(); // Reset visitor context before merge to allow relationship updates
         try {
             return inWriteTx(tx -> {
                 EntityWithRelations data = entityMapper.toDb(entity);
@@ -576,7 +589,10 @@ public abstract class Repository<T> {
                             String alias = resolveAlias(rec);
                             return entityMapper.map(rec, alias);
                         });
-                results.forEach(e -> loadRelations(e, 0));
+                results.forEach(e -> {
+                    loadRelations(e, 0);
+                    entityMapper.applyPostLoadConverters(e);
+                });
                 return results;
             });
         } finally {
@@ -598,7 +614,10 @@ public abstract class Repository<T> {
                     String alias = resolveAlias(rec);
                     return entityMapper.map(rec, alias);
                 });
-                entities.forEach(e -> loadRelations(e, 0));
+                entities.forEach(e -> {
+                    loadRelations(e, 0);
+                    entityMapper.applyPostLoadConverters(e);
+                });
                 return entities;
             });
         } finally {
@@ -636,7 +655,10 @@ public abstract class Repository<T> {
                     String alias = resolveAlias(rec);
                     return entityMapper.map(rec, alias);
                 });
-                entities.forEach(e -> loadRelations(e, 0));
+                entities.forEach(e -> {
+                    loadRelations(e, 0);
+                    entityMapper.applyPostLoadConverters(e);
+                });
 
                 return new Paged<>(entities, total, pageable.page(), pageable.size());
             });
@@ -666,7 +688,10 @@ public abstract class Repository<T> {
                     String alias = resolveAlias(rec);
                     return entityMapper.map(rec, alias);
                 });
-                entities.forEach(e -> loadRelations(e, 0));
+                entities.forEach(e -> {
+                    loadRelations(e, 0);
+                    entityMapper.applyPostLoadConverters(e);
+                });
 
                 return new Paged<>(entities, total, pageable.page(), pageable.size());
             });
@@ -712,6 +737,7 @@ public abstract class Repository<T> {
                 String alias = resolveAlias(rec);
                 T entity = entityMapper.map(rec, alias);
                 loadRelations(entity, 0);
+                entityMapper.applyPostLoadConverters(entity);
                 return Optional.of(entity);
             });
         } finally {
@@ -750,7 +776,10 @@ public abstract class Repository<T> {
                     String alias = resolveAlias(rec);
                     return entityMapper.map(rec, alias);
                 });
-                entities.forEach(e -> loadRelations(e, 0));
+                entities.forEach(e -> {
+                    loadRelations(e, 0);
+                    entityMapper.applyPostLoadConverters(e);
+                });
                 return entities;
             });
         } finally {
@@ -835,9 +864,10 @@ public abstract class Repository<T> {
         }
 
         for (String typeKey : relationshipTypes) {
-            String[] parts = typeKey.split("_");
-            String relType = parts[0];
-            String direction = parts[1];
+            // Split from the right side to handle relationship types with underscores
+            int lastUnderscore = typeKey.lastIndexOf("_");
+            String relType = typeKey.substring(0, lastUnderscore);
+            String direction = typeKey.substring(lastUnderscore + 1);
 
             String deleteQuery = switch (direction) {
                 case "OUTGOING" ->

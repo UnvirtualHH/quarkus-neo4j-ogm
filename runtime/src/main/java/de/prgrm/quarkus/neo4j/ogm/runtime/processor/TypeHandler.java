@@ -22,4 +22,16 @@ public interface TypeHandler {
     default CodeBlock generateParameterConversion(String paramName) {
         return CodeBlock.of("$L", paramName);
     }
+
+    /**
+     * Generates code to apply post-load converters (for context-aware converters).
+     * This is called after relationships have been loaded.
+     *
+     * @param field the field to generate post-load converter code for
+     * @param entityVar the variable name of the entity
+     * @return the code block, or null if this handler doesn't need post-load conversion
+     */
+    default CodeBlock generatePostLoadConverterCode(VariableElement field, String entityVar) {
+        return null; // Most handlers don't need this
+    }
 }

@@ -13,11 +13,13 @@ import de.prgrm.quarkus.neo4j.ogm.runtime.processor.types.*;
 public class TypeHandlerRegistry {
 
     private static final List<TypeHandler> handlers = List.of(
+            // ConverterTypeHandler must be first to check for @Convert annotation
+            // before other type-based handlers
+            new ConverterTypeHandler(),
             new StringTypeHandler(),
             new IntegerTypeHandler(),
             new BooleanTypeHandler(),
             new EnumTypeHandler(),
-            new ConverterTypeHandler(),
             new CharTypeHandler(),
             new FloatTypeHandler(),
             new ListTypeHandler(),

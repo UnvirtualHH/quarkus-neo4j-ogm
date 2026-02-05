@@ -30,6 +30,16 @@ public interface EntityMapper<T> {
 
     void setRelation(T entity, String relationType, Object relatedEntity);
 
+    /**
+     * Applies context-aware converters after relationships have been loaded.
+     * This method should be called after all relationships are set on the entity.
+     *
+     * @param entity The entity with loaded relationships.
+     */
+    default void applyPostLoadConverters(T entity) {
+        // Default implementation does nothing - mappers with context-aware converters will override
+    }
+
     default Object convertValue(Object value) {
         return value;
     }

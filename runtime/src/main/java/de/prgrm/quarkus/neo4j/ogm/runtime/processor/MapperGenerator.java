@@ -47,8 +47,9 @@ public class MapperGenerator {
         MethodSpec getNodeIdPropertyNameMethod = generateGetNodeIdPropertyName(entityType);
         MethodSpec setRelationMethod = generateSetRelationMethod(entityType);
         MethodSpec registerSelfMethod = generateRegisterSelfMethod(entityType);
+        MethodSpec applyPostLoadConvertersMethod = generateApplyPostLoadConvertersMethod(entityType, processingEnv);
 
-        TypeSpec mapperClass = TypeSpec.classBuilder(mapperClassName)
+        TypeSpec.Builder mapperBuilder = TypeSpec.classBuilder(mapperClassName)
                 .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
                 .addAnnotation(ApplicationScoped.class)
                 .addAnnotation(ClassName.get("io.quarkus.runtime", "Startup"))
@@ -66,8 +67,14 @@ public class MapperGenerator {
                 .addMethod(getNodeIdMethod)
                 .addMethod(getNodeIdPropertyNameMethod)
                 .addMethod(setRelationMethod)
-                .addMethod(registerSelfMethod)
-                .build();
+                .addMethod(registerSelfMethod);
+
+        // Only add applyPostLoadConverters if it's not empty
+        if (applyPostLoadConvertersMethod != null) {
+            mapperBuilder.addMethod(applyPostLoadConvertersMethod);
+        }
+
+        TypeSpec mapperClass = mapperBuilder.build();
 
         try {
             JavaFile.builder(packageName, mapperClass)
@@ -319,6 +326,37 @@ public class MapperGenerator {
                 .addAnnotation(ClassName.get("jakarta.annotation", "PostConstruct"))
                 .addStatement("registry.registerSelf($T.class, this)", TypeName.get(entityType.asType()))
                 .build();
+    }
+
+    // ======================================================================
+    // applyPostLoadConverters()
+    // ======================================================================
+
+    private MethodSpec generateApplyPostLoadConvertersMethod(TypeElement entityType, ProcessingEnvironment env) {
+        MethodSpec.Builder b = MethodSpec.methodBuilder("applyPostLoadConverters")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
+                .addParameter(TypeName.get(entityType.asType()), "entity");
+
+        boolean hasPostLoadConverters = false;
+
+        for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
+            if (!shouldIncludeField(field, env))
+                continue;
+
+            Optional<TypeHandler> handler = TypeHandlerRegistry.findHandler(field, env.getTypeUtils(), env.getElementUtils());
+
+            if (handler.isPresent()) {
+                CodeBlock postLoadCode = handler.get().generatePostLoadConverterCode(field, "entity");
+                if (postLoadCode != null) {
+                    b.addCode(postLoadCode);
+                    hasPostLoadConverters = true;
+                }
+            }
+        }
+
+        // Only return the method if there are context-aware converters
+        return hasPostLoadConverters ? b.build() : null;
     }
 
     // ======================================================================

@@ -16,7 +16,7 @@ import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.NodeEntity;
 
 @AutoService(Processor.class)
 @SupportedAnnotationTypes("de.prgrm.quarkus.neo4j.ogm.runtime.mapping.NodeEntity")
-@SupportedSourceVersion(SourceVersion.RELEASE_21)
+@SupportedSourceVersion(SourceVersion.RELEASE_25)
 public class EntityMapperProcessor extends AbstractProcessor {
 
     private MapperGenerator mapperGenerator;

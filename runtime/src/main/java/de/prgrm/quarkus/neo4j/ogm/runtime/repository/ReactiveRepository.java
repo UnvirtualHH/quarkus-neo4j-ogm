@@ -575,7 +575,8 @@ public abstract class ReactiveRepository<T> {
                         return Uni.createFrom().item(entity);
                     }
                     return relationLoader.loadRelations(entity, currentDepth, visitorContext);
-                });
+                })
+                .invoke(e -> entityMapper.applyPostLoadConverters(e));
     }
 
     protected Uni<T> loadRelations(T entity) {
