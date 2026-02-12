@@ -56,7 +56,7 @@
         <compiler-plugin.version>3.15.0</compiler-plugin.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        <quarkus.version>3.30.6</quarkus.version>
+        <quarkus.version>3.31.1</quarkus.version>
         <javapoet.version>0.8.0</javapoet.version>
         <quarkus.neo4j.version>6.2.0</quarkus.neo4j.version>
     </properties>
