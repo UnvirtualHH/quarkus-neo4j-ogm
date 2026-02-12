@@ -41,7 +41,9 @@ public class MapperGenerator {
 
         TypeHandlerRegistry.init(processingEnv);
 
-        MethodSpec mapMethod = generateMapMethod(entityType, processingEnv);
+        boolean hasContextAwareConverters = hasContextAwareConverters(entityType, processingEnv);
+
+        MethodSpec mapMethod = generateMapMethod(entityType, processingEnv, hasContextAwareConverters);
         MethodSpec toDbMethod = generateToDbMethod(entityType, processingEnv);
         MethodSpec getNodeIdMethod = generateGetNodeIdMethod(entityType);
         MethodSpec getNodeIdPropertyNameMethod = generateGetNodeIdPropertyName(entityType);
@@ -61,8 +63,23 @@ public class MapperGenerator {
                         "registry",
                         Modifier.PRIVATE)
                         .addAnnotation(ClassName.get("jakarta.inject", "Inject"))
-                        .build())
-                .addMethod(mapMethod)
+                        .build());
+
+        // Only add _rawValues field if entity has context-aware converters
+        // Use IdentityHashMap to store raw values per entity instance (not shared across entities)
+        if (hasContextAwareConverters) {
+            mapperBuilder.addField(FieldSpec.builder(
+                    ParameterizedTypeName.get(ClassName.get(Map.class),
+                            TypeName.get(entityType.asType()),
+                            ParameterizedTypeName.get(ClassName.get(Map.class), ClassName.get(String.class),
+                                    ClassName.get(Object.class))),
+                    "_rawValuesByEntity",
+                    Modifier.PRIVATE)
+                    .initializer("new $T<>()", java.util.IdentityHashMap.class)
+                    .build());
+        }
+
+        mapperBuilder.addMethod(mapMethod)
                 .addMethod(toDbMethod)
                 .addMethod(getNodeIdMethod)
                 .addMethod(getNodeIdPropertyNameMethod)
@@ -95,16 +112,18 @@ public class MapperGenerator {
     // map()
     // ======================================================================
 
-    private MethodSpec generateMapMethod(TypeElement entityType, ProcessingEnvironment env) {
+    private MethodSpec generateMapMethod(TypeElement entityType, ProcessingEnvironment env,
+            boolean hasContextAwareConverters) {
         MethodSpec.Builder b = MethodSpec.methodBuilder("map")
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
                 .returns(TypeName.get(entityType.asType()))
                 .addParameter(ClassName.get("org.neo4j.driver", "Record"), "record")
-                .addParameter(String.class, "alias")
-                .addStatement("$T instance = new $T()",
-                        TypeName.get(entityType.asType()),
-                        TypeName.get(entityType.asType()))
+                .addParameter(String.class, "alias");
+
+        b.addStatement("$T instance = new $T()",
+                TypeName.get(entityType.asType()),
+                TypeName.get(entityType.asType()))
                 .addStatement("$T nodeValue = record.get(alias)",
                         ClassName.get("org.neo4j.driver", "Value"));
 
@@ -362,6 +381,24 @@ public class MapperGenerator {
     // ======================================================================
     // Helpers
     // ======================================================================
+
+    private boolean hasContextAwareConverters(TypeElement entityType, ProcessingEnvironment processingEnv) {
+        for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
+            if (field.getAnnotation(Convert.class) != null) {
+                Optional<TypeHandler> handler = TypeHandlerRegistry.findHandler(field,
+                        processingEnv.getTypeUtils(), processingEnv.getElementUtils());
+                if (handler.isPresent()
+                        && handler.get() instanceof de.prgrm.quarkus.neo4j.ogm.runtime.processor.types.ConverterTypeHandler) {
+                    de.prgrm.quarkus.neo4j.ogm.runtime.processor.types.ConverterTypeHandler converterHandler = (de.prgrm.quarkus.neo4j.ogm.runtime.processor.types.ConverterTypeHandler) handler
+                            .get();
+                    if (converterHandler.generatePostLoadConverterCode(field, "entity") != null) {
+                        return true; // Found at least one context-aware converter
+                    }
+                }
+            }
+        }
+        return false;
+    }
 
     private boolean shouldFetchRelationship(Relationship rel) {
         return rel.mode() == RelationshipMode.FETCH_ONLY

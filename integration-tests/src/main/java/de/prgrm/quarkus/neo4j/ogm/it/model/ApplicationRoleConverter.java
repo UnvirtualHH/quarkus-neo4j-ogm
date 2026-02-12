@@ -4,25 +4,34 @@ import de.prgrm.quarkus.neo4j.ogm.runtime.converter.ContextAwareAttributeConvert
 
 /**
  * Converter that uses the related Application entity to read the discriminator.
- * This demonstrates the context-aware converter feature.
+ * This demonstrates the context-aware converter feature with custom type conversion.
+ *
+ * Converts between:
+ * - Database: String (e.g., "EDITOR")
+ * - Entity: ApplicationRole (custom object containing role + discriminator)
  */
-public class ApplicationRoleConverter implements ContextAwareAttributeConverter<String, String, UserApplication> {
+public class ApplicationRoleConverter implements ContextAwareAttributeConverter<ApplicationRole, String, UserApplication> {
 
     @Override
-    public String toGraphProperty(String value, UserApplication entity) {
-        // With context-aware converter, we don't need to store discriminator in the role
-        // The discriminator is accessible through the related Application entity
-        return value;
+    public String toGraphProperty(ApplicationRole value, UserApplication entity) {
+        // Store only the base role value in the database
+        // The discriminator will be derived from the related Application entity when loading
+        return value != null ? value.getRole() : null;
     }
 
     @Override
-    public String toEntityAttribute(String value, UserApplication entity) {
+    public ApplicationRole toEntityAttribute(String value, UserApplication entity) {
         // Access the discriminator from the related Application entity
-        if (entity != null && entity.getApplication() != null) {
-            String discriminator = entity.getApplication().getDiscriminator();
-            // Parse role based on discriminator (example logic)
-            return discriminator != null ? value + "_" + discriminator : value;
+        if (value == null) {
+            return null;
         }
-        return value;
+
+        String discriminator = null;
+        if (entity != null && entity.getApplication() != null) {
+            discriminator = entity.getApplication().getDiscriminator();
+        }
+
+        // Create ApplicationRole with context from related entity
+        return new ApplicationRole(value, discriminator);
     }
 }

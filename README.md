@@ -58,7 +58,7 @@ Add the dependency to your `pom.xml`:
 <dependency>
     <groupId>de.prgrm.quarkus-neo4j-ogm</groupId>
     <artifactId>quarkus-neo4j-ogm</artifactId>
-    <version>1.0.5</version>
+    <version>1.0.7</version>
 </dependency>
 ```
 

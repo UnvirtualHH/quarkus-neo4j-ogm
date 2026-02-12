@@ -36,13 +36,16 @@ public class ConverterTypeHandler implements TypeHandler {
         boolean isContextAware = isContextAwareConverter(converterType);
 
         if (isContextAware) {
-            // Context-aware converter: store raw value, convert later after relationships load
+            // Context-aware converter: Store the raw database value WITHOUT conversion
+            // The field will be set later in applyPostLoadConverters() after relationships are loaded
+            // We store the raw value in a per-entity Map for later retrieval
+            // Note: Null check is already done by the caller (generateMapMethod)
             CodeBlock.Builder builder = CodeBlock.builder();
-            builder.addStatement("$L.$L($L.get($S).asString())",
+            builder.addStatement("_rawValuesByEntity.computeIfAbsent($L, k -> new $T<>()).put($S, $L.get($S).asString())",
                     targetVar,
-                    resolveSetterName(field),
-                    valueSource,
-                    getPropertyName(field));
+                    java.util.HashMap.class,
+                    getPropertyName(field),
+                    valueSource, getPropertyName(field));
             return builder.build();
         } else {
             // Standard converter: convert immediately
@@ -98,15 +101,19 @@ public class ConverterTypeHandler implements TypeHandler {
 
         TypeName converterClass = TypeName.get(converterType);
         String converterVar = field.getSimpleName().toString() + "Converter";
-        String getter = resolveGetterName(field);
         String setter = resolveSetterName(field);
+        String property = getPropertyName(field);
 
         CodeBlock.Builder builder = CodeBlock.builder();
         builder.addStatement("$T $L = new $T()", converterClass, converterVar, converterClass);
-        builder.addStatement("if ($L.$L() != null) $L.$L($L.toEntityAttribute($L.$L(), $L))",
-                entityVar, getter,
+        // Read raw value from per-entity _rawValuesByEntity map
+        builder.addStatement("$T<String, Object> _entityRawValues = _rawValuesByEntity.get($L)",
+                java.util.Map.class, entityVar);
+        builder.addStatement(
+                "if (_entityRawValues != null && _entityRawValues.containsKey($S)) $L.$L($L.toEntityAttribute((String) _entityRawValues.get($S), $L))",
+                property,
                 entityVar, setter,
-                converterVar, entityVar, getter, entityVar);
+                converterVar, property, entityVar);
 
         return builder.build();
     }

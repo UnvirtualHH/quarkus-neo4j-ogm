@@ -22,7 +22,7 @@ public class UserApplication {
     private Application application;
 
     @Convert(ApplicationRoleConverter.class)
-    private String role;
+    private ApplicationRole role;
 
     public UserApplication() {
     }
@@ -43,11 +43,11 @@ public class UserApplication {
         this.application = application;
     }
 
-    public String getRole() {
+    public ApplicationRole getRole() {
         return role;
     }
 
-    public void setRole(String role) {
+    public void setRole(ApplicationRole role) {
         this.role = role;
     }
 }
