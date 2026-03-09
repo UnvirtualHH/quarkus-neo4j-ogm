@@ -291,11 +291,11 @@ final class QueryMethodFactory {
 
     static List<String> extractParamNames(String cypher) {
         Matcher matcher = PARAM_PATTERN.matcher(cypher);
-        List<String> params = new ArrayList<>();
+        LinkedHashSet<String> seen = new LinkedHashSet<>();
         while (matcher.find()) {
-            params.add(matcher.group(1));
+            seen.add(matcher.group(1));
         }
-        return params;
+        return new ArrayList<>(seen);
     }
 
     private static String toTextBlock(String query) {
