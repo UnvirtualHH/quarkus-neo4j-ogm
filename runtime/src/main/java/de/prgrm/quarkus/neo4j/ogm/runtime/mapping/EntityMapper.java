@@ -31,6 +31,17 @@ public interface EntityMapper<T> {
     void setRelation(T entity, String relationType, Object relatedEntity);
 
     /**
+     * Maps an entity from a raw Neo4j Value (node).
+     * Used for mapping relationship data returned as additional columns in custom queries.
+     *
+     * @param nodeValue The Neo4j Value representing a node.
+     * @return The mapped entity of type T.
+     */
+    default T mapFromValue(org.neo4j.driver.Value nodeValue) {
+        throw new UnsupportedOperationException("mapFromValue not implemented for " + getClass().getName());
+    }
+
+    /**
      * Applies context-aware converters after relationships have been loaded.
      * This method should be called after all relationships are set on the entity.
      *

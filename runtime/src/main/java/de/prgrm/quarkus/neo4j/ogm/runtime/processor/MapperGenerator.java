@@ -43,6 +43,7 @@ public class MapperGenerator {
 
         boolean hasContextAwareConverters = hasContextAwareConverters(entityType, processingEnv);
 
+        MethodSpec mapFromValueMethod = generateMapFromValueMethod(entityType, processingEnv);
         MethodSpec mapMethod = generateMapMethod(entityType, processingEnv, hasContextAwareConverters);
         MethodSpec toDbMethod = generateToDbMethod(entityType, processingEnv);
         MethodSpec getNodeIdMethod = generateGetNodeIdMethod(entityType);
@@ -79,7 +80,8 @@ public class MapperGenerator {
                     .build());
         }
 
-        mapperBuilder.addMethod(mapMethod)
+        mapperBuilder.addMethod(mapFromValueMethod)
+                .addMethod(mapMethod)
                 .addMethod(toDbMethod)
                 .addMethod(getNodeIdMethod)
                 .addMethod(getNodeIdPropertyNameMethod)
@@ -109,23 +111,19 @@ public class MapperGenerator {
     }
 
     // ======================================================================
-    // map()
+    // mapFromValue()
     // ======================================================================
 
-    private MethodSpec generateMapMethod(TypeElement entityType, ProcessingEnvironment env,
-            boolean hasContextAwareConverters) {
-        MethodSpec.Builder b = MethodSpec.methodBuilder("map")
+    private MethodSpec generateMapFromValueMethod(TypeElement entityType, ProcessingEnvironment env) {
+        MethodSpec.Builder b = MethodSpec.methodBuilder("mapFromValue")
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
                 .returns(TypeName.get(entityType.asType()))
-                .addParameter(ClassName.get("org.neo4j.driver", "Record"), "record")
-                .addParameter(String.class, "alias");
+                .addParameter(ClassName.get("org.neo4j.driver", "Value"), "nodeValue");
 
         b.addStatement("$T instance = new $T()",
                 TypeName.get(entityType.asType()),
-                TypeName.get(entityType.asType()))
-                .addStatement("$T nodeValue = record.get(alias)",
-                        ClassName.get("org.neo4j.driver", "Value"));
+                TypeName.get(entityType.asType()));
 
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             if (!shouldIncludeField(field, env))
@@ -141,6 +139,61 @@ public class MapperGenerator {
                 b.addCode(handler.get().generateSetterCode(field, "instance", "nodeValue"));
                 b.endControlFlow();
             }
+        }
+
+        b.addStatement("return instance");
+        return b.build();
+    }
+
+    // ======================================================================
+    // map()
+    // ======================================================================
+
+    private MethodSpec generateMapMethod(TypeElement entityType, ProcessingEnvironment env,
+            boolean hasContextAwareConverters) {
+        MethodSpec.Builder b = MethodSpec.methodBuilder("map")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
+                .returns(TypeName.get(entityType.asType()))
+                .addParameter(ClassName.get("org.neo4j.driver", "Record"), "record")
+                .addParameter(String.class, "alias");
+
+        b.addStatement("$T instance = mapFromValue(record.get(alias))",
+                TypeName.get(entityType.asType()));
+
+        // Map DESIGN_ONLY relationships from additional record columns
+        for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
+            Relationship rel = field.getAnnotation(Relationship.class);
+            if (rel == null || rel.mode() != RelationshipMode.DESIGN_ONLY)
+                continue;
+
+            String fieldName = field.getSimpleName().toString();
+            String setter = MapperUtil.resolveSetterName(field);
+            String targetType = MapperUtil.getFieldType(field);
+            boolean isCollection = field.asType().toString().startsWith("java.util.List");
+            ClassName targetClass = ClassName.bestGuess(targetType);
+
+            b.beginControlFlow("if (!record.get($S).isNull())", fieldName);
+
+            if (isCollection) {
+                b.addStatement("$T<$T> _relMapper = registry.get($T.class)",
+                        EntityMapper.class, targetClass, targetClass);
+                b.addStatement("$T<$T> _relList = new $T<>()",
+                        List.class, targetClass, java.util.ArrayList.class);
+                b.beginControlFlow("for ($T _item : record.get($S).values())",
+                        ClassName.get("org.neo4j.driver", "Value"), fieldName);
+                b.beginControlFlow("if (!_item.isNull())");
+                b.addStatement("_relList.add(_relMapper.mapFromValue(_item))");
+                b.endControlFlow();
+                b.endControlFlow();
+                b.addStatement("instance.$L(_relList)", setter);
+            } else {
+                b.addStatement("$T<$T> _relMapper = registry.get($T.class)",
+                        EntityMapper.class, targetClass, targetClass);
+                b.addStatement("instance.$L(_relMapper.mapFromValue(record.get($S)))", setter, fieldName);
+            }
+
+            b.endControlFlow();
         }
 
         b.addStatement("return instance");
@@ -296,10 +349,7 @@ public class MapperGenerator {
     private MethodSpec generateSetRelationMethod(TypeElement entityType) {
         List<VariableElement> relFields = ElementFilter.fieldsIn(entityType.getEnclosedElements())
                 .stream()
-                .filter(f -> {
-                    Relationship r = f.getAnnotation(Relationship.class);
-                    return r != null && shouldFetchRelationship(r);
-                })
+                .filter(f -> f.getAnnotation(Relationship.class) != null)
                 .toList();
 
         MethodSpec.Builder b = MethodSpec.methodBuilder("setRelation")
