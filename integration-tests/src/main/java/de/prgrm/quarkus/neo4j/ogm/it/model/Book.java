@@ -24,7 +24,9 @@ import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.GenerateRepository.RepositoryT
                 MATCH (b:Book)
                 WHERE b.title = $title OR b.title STARTS WITH $title
                 RETURN b
-                """)
+                """),
+        @Query(name = "getBookSummary", cypher = "MATCH (b:Book {title: $title}) RETURN b.title AS title, b.active AS active", resultClass = BookSummary.class),
+        @Query(name = "getAllBookSummaries", cypher = "MATCH (b:Book) RETURN b.title AS title, b.active AS active", returnType = ReturnType.LIST, resultClass = BookSummary.class)
 })
 public class Book {
 

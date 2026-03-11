@@ -473,6 +473,33 @@ public abstract class ReactiveRepository<T> {
         return runScalarReadQuery(null, cypher, parameters, mapper);
     }
 
+    public <R> Uni<List<R>> queryScalarList(String cypher,
+            Map<String, Object> parameters,
+            Function<Record, R> mapper) {
+        return runQueryInternal(null, cypher, parameters, true)
+                .map(mapper)
+                .collect().asList()
+                .onFailure().transform(t -> new RepositoryException("Failed to execute scalar list query", t));
+    }
+
+    public <R> Uni<R> executeScalar(String cypher,
+            Map<String, Object> parameters,
+            Function<Record, R> mapper) {
+        return runQueryInternal(null, cypher, parameters, false)
+                .map(mapper)
+                .toUni()
+                .onFailure().transform(t -> new RepositoryException("Failed to execute write scalar query", t));
+    }
+
+    public <R> Uni<List<R>> executeScalarList(String cypher,
+            Map<String, Object> parameters,
+            Function<Record, R> mapper) {
+        return runQueryInternal(null, cypher, parameters, false)
+                .map(mapper)
+                .collect().asList()
+                .onFailure().transform(t -> new RepositoryException("Failed to execute write scalar list query", t));
+    }
+
     // ----------------------------------------------------------
     // Public Repository API (transactional overloads using ReactiveTxContext)
     // ----------------------------------------------------------

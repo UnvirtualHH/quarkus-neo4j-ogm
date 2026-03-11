@@ -7,6 +7,8 @@ import java.util.regex.Pattern;
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.*;
 import javax.lang.model.type.MirroredTypeException;
+import javax.lang.model.type.TypeKind;
+import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
 
 import com.palantir.javapoet.*;
@@ -14,6 +16,7 @@ import com.palantir.javapoet.*;
 import de.prgrm.quarkus.neo4j.ogm.runtime.enums.ReturnType;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.Queries;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.Query;
+import de.prgrm.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil;
 
 final class QueryMethodFactory {
 
@@ -77,6 +80,17 @@ final class QueryMethodFactory {
 
         CodeBlock mapArgs = buildMapArgs(paramNames, explicitTypes, entityType, env);
 
+        // --- Projection support: check for resultClass ---
+        TypeMirror resultClassMirror = getResultClassMirror(q);
+        boolean isProjection = resultClassMirror != null
+                && resultClassMirror.getKind() != TypeKind.VOID;
+
+        if (isProjection) {
+            return buildProjectionMethod(reactive, mb, returnType, resultClassMirror,
+                    hasWrite, hasRet, transactional, paramNames, mapArgs, env);
+        }
+
+        // --- Existing entity/scalar paths ---
         String repoCall;
         if (!transactional) {
             if (hasWrite && !hasRet) {
@@ -131,6 +145,183 @@ final class QueryMethodFactory {
 
         return mb.build();
     }
+
+    // ========================= Projection Methods =========================
+
+    private static MethodSpec buildProjectionMethod(
+            boolean reactive,
+            MethodSpec.Builder mb,
+            ReturnType returnType,
+            TypeMirror resultClassMirror,
+            boolean hasWrite,
+            boolean hasRet,
+            boolean transactional,
+            List<String> paramNames,
+            CodeBlock mapArgs,
+            ProcessingEnvironment env) {
+
+        TypeElement resultType = (TypeElement) env.getTypeUtils().asElement(resultClassMirror);
+        ClassName resultClassName = ClassName.get(resultType);
+
+        // Determine which repository method to call
+        String repoCall;
+        boolean isList = (returnType == ReturnType.LIST);
+        if (transactional || hasWrite) {
+            repoCall = isList ? "executeScalarList" : "executeScalar";
+        } else {
+            repoCall = isList ? "queryScalarList" : "queryScalar";
+        }
+
+        // Set return type
+        if (isList) {
+            TypeName listType = ParameterizedTypeName.get(ClassName.get(List.class), resultClassName);
+            if (reactive) {
+                mb.returns(ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"), listType));
+            } else {
+                mb.returns(listType);
+            }
+        } else {
+            if (reactive) {
+                mb.returns(ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"), resultClassName));
+            } else {
+                mb.returns(resultClassName);
+            }
+        }
+
+        // Build the mapping lambda
+        CodeBlock mapperLambda;
+        if (resultType.getKind() == ElementKind.RECORD) {
+            mapperLambda = buildRecordMapperLambda(resultType, resultClassName, env);
+        } else {
+            mapperLambda = buildDtoMapperLambda(resultType, resultClassName, env);
+        }
+
+        // Build the return statement
+        ClassName mapClass = ClassName.get("java.util", "Map");
+        if (paramNames.isEmpty()) {
+            mb.addStatement("return $L(query, $T.of(), $L)", repoCall, mapClass, mapperLambda);
+        } else {
+            mb.addStatement("return $L(query, $T.of(" + mapArgs + "), $L)", repoCall, mapClass, mapperLambda);
+        }
+
+        return mb.build();
+    }
+
+    private static CodeBlock buildRecordMapperLambda(
+            TypeElement recordType,
+            ClassName resultClassName,
+            ProcessingEnvironment env) {
+
+        List<? extends RecordComponentElement> components = recordType.getRecordComponents();
+
+        CodeBlock.Builder lambda = CodeBlock.builder();
+        lambda.add("r -> new $T(", resultClassName);
+
+        for (int i = 0; i < components.size(); i++) {
+            if (i > 0) {
+                lambda.add(", ");
+            }
+            RecordComponentElement comp = components.get(i);
+            String name = comp.getSimpleName().toString();
+            TypeMirror type = comp.asType();
+            lambda.add(generateValueExtraction(name, type));
+        }
+
+        lambda.add(")");
+        return lambda.build();
+    }
+
+    private static CodeBlock buildDtoMapperLambda(
+            TypeElement dtoType,
+            ClassName resultClassName,
+            ProcessingEnvironment env) {
+
+        List<VariableElement> fields = ElementFilter.fieldsIn(dtoType.getEnclosedElements())
+                .stream()
+                .filter(f -> !f.getModifiers().contains(Modifier.STATIC))
+                .toList();
+
+        CodeBlock.Builder lambda = CodeBlock.builder();
+        lambda.add("r -> {\n");
+        lambda.indent();
+        lambda.addStatement("$T _result = new $T()", resultClassName, resultClassName);
+
+        for (VariableElement field : fields) {
+            String name = field.getSimpleName().toString();
+            String setter = "set" + MapperUtil.capitalize(name);
+            TypeMirror type = field.asType();
+            CodeBlock extraction = generateValueExtraction(name, type);
+
+            if (type.getKind().isPrimitive()) {
+                lambda.addStatement("_result.$L($L)", setter, extraction);
+            } else {
+                lambda.addStatement("if (!r.get($S).isNull()) _result.$L($L)", name, setter, extraction);
+            }
+        }
+
+        lambda.addStatement("return _result");
+        lambda.unindent();
+        lambda.add("}");
+        return lambda.build();
+    }
+
+    private static CodeBlock generateValueExtraction(String columnName, TypeMirror type) {
+        String fqcn = type.toString();
+
+        // Primitives — no null check needed
+        if (type.getKind().isPrimitive()) {
+            return switch (type.getKind()) {
+                case INT -> CodeBlock.of("r.get($S).asInt()", columnName);
+                case LONG -> CodeBlock.of("r.get($S).asLong()", columnName);
+                case BOOLEAN -> CodeBlock.of("r.get($S).asBoolean()", columnName);
+                case DOUBLE -> CodeBlock.of("r.get($S).asDouble()", columnName);
+                case FLOAT -> CodeBlock.of("(float) r.get($S).asDouble()", columnName);
+                case SHORT -> CodeBlock.of("(short) r.get($S).asInt()", columnName);
+                case BYTE -> CodeBlock.of("(byte) r.get($S).asInt()", columnName);
+                case CHAR -> CodeBlock.of("r.get($S).asString().charAt(0)", columnName);
+                default -> CodeBlock.of("r.get($S).asObject()", columnName);
+            };
+        }
+
+        // Object types — wrap with null check
+        CodeBlock conversion = switch (fqcn) {
+            case "java.lang.String" ->
+                CodeBlock.of("r.get($S).asString()", columnName);
+            case "java.lang.Integer" ->
+                CodeBlock.of("r.get($S).asInt()", columnName);
+            case "java.lang.Long" ->
+                CodeBlock.of("r.get($S).asLong()", columnName);
+            case "java.lang.Boolean" ->
+                CodeBlock.of("r.get($S).asBoolean()", columnName);
+            case "java.lang.Double" ->
+                CodeBlock.of("r.get($S).asDouble()", columnName);
+            case "java.lang.Float" ->
+                CodeBlock.of("(float) r.get($S).asDouble()", columnName);
+            case "java.util.UUID" ->
+                CodeBlock.of("$T.fromString(r.get($S).asString())", java.util.UUID.class, columnName);
+            case "java.time.LocalDate" ->
+                CodeBlock.of("r.get($S).asLocalDate()", columnName);
+            case "java.time.LocalDateTime" ->
+                CodeBlock.of("r.get($S).asLocalDateTime()", columnName);
+            case "java.time.Instant" ->
+                CodeBlock.of("r.get($S).asZonedDateTime().toInstant()", columnName);
+            default ->
+                CodeBlock.of("($T) r.get($S).asObject()", ClassName.bestGuess(fqcn), columnName);
+        };
+
+        return CodeBlock.of("r.get($S).isNull() ? null : $L", columnName, conversion);
+    }
+
+    private static TypeMirror getResultClassMirror(Query q) {
+        try {
+            q.resultClass();
+            return null;
+        } catch (MirroredTypeException mte) {
+            return mte.getTypeMirror();
+        }
+    }
+
+    // ========================= Existing Methods =========================
 
     private static MethodSpec buildWriteOnlyMethod(
             boolean reactive,

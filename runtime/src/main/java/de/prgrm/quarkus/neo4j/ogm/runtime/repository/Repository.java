@@ -802,6 +802,24 @@ public abstract class Repository<T> {
         });
     }
 
+    public <R> List<R> queryScalarList(String cypher, Map<String, Object> parameters, Function<Record, R> mapper) {
+        return inReadTx(tx -> tx.run(cypher, Values.value(parameters)).list(mapper::apply));
+    }
+
+    public <R> R executeScalar(String cypher, Map<String, Object> parameters, Function<Record, R> mapper) {
+        return inWriteTx(tx -> {
+            var result = tx.run(cypher, Values.value(parameters));
+            if (!result.hasNext()) {
+                return null;
+            }
+            return mapper.apply(result.next());
+        });
+    }
+
+    public <R> List<R> executeScalarList(String cypher, Map<String, Object> parameters, Function<Record, R> mapper) {
+        return inWriteTx(tx -> tx.run(cypher, Values.value(parameters)).list(mapper::apply));
+    }
+
     // ========================= Relation Loading mit CDI Visitor =========================
 
     protected void loadRelations(T entity, int depth) {

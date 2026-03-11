@@ -18,6 +18,8 @@ public @interface Query {
 
     boolean transactional() default false;
 
+    Class<?> resultClass() default void.class;
+
     @interface Param {
         String name();
 
