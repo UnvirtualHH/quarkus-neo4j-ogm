@@ -14,6 +14,7 @@ import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.RelationLoader;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.RelationshipData;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.errors.Neo4jExceptionTranslator;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.errors.NotFoundRepositoryException;
+import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.CypherIdentifier;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Filter;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Pageable;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Paged;
@@ -47,7 +48,7 @@ public abstract class Repository<T> {
     public Repository(Driver driver, String label, EntityMapper<T> entityMapper, RepositoryRegistry registry,
             TransactionManager txManager) {
         this.driver = driver;
-        this.label = label;
+        this.label = CypherIdentifier.requireValidIdentifier(label);
         this.entityMapper = entityMapper;
         this.registry = registry;
         this.relationLoader = null;
@@ -58,7 +59,7 @@ public abstract class Repository<T> {
     public Repository(Driver driver, String label, EntityMapper<T> entityMapper, RepositoryRegistry registry,
             RelationVisitor relationVisitor, TransactionManager txManager) {
         this.driver = driver;
-        this.label = label;
+        this.label = CypherIdentifier.requireValidIdentifier(label);
         this.entityMapper = entityMapper;
         this.registry = registry;
         this.relationLoader = null;
@@ -69,7 +70,7 @@ public abstract class Repository<T> {
     public Repository(Driver driver, String label, EntityMapper<T> entityMapper, RepositoryRegistry registry,
             RelationLoader<T> relationLoader, RelationVisitor relationVisitor, TransactionManager txManager) {
         this.driver = driver;
-        this.label = label;
+        this.label = CypherIdentifier.requireValidIdentifier(label);
         this.entityMapper = entityMapper;
         this.registry = registry;
         this.relationLoader = relationLoader;
@@ -715,6 +716,7 @@ public abstract class Repository<T> {
                 String alias = resolveAlias(rec);
                 T entity = entityMapper.map(rec, alias);
                 loadRelations(entity, 0);
+                entityMapper.applyPostLoadConverters(entity);
                 return entity;
             });
         } finally {
@@ -760,6 +762,7 @@ public abstract class Repository<T> {
                 String alias = resolveAlias(rec);
                 T entity = entityMapper.map(rec, alias);
                 loadRelations(entity, 0);
+                entityMapper.applyPostLoadConverters(entity);
                 return entity;
             });
         } finally {
@@ -884,7 +887,7 @@ public abstract class Repository<T> {
         for (String typeKey : relationshipTypes) {
             // Split from the right side to handle relationship types with underscores
             int lastUnderscore = typeKey.lastIndexOf("_");
-            String relType = typeKey.substring(0, lastUnderscore);
+            String relType = CypherIdentifier.requireValidIdentifier(typeKey.substring(0, lastUnderscore));
             String direction = typeKey.substring(lastUnderscore + 1);
 
             String deleteQuery = switch (direction) {
@@ -913,6 +916,9 @@ public abstract class Repository<T> {
             if (rel.getMode() == RelationshipMode.FETCH_ONLY) {
                 continue;
             }
+
+            // Relationship types are concatenated into the query, validate them defensively.
+            CypherIdentifier.requireValidIdentifier(rel.getType());
 
             Object toId = rel.getTargetId();
             EntityWithRelations target = rel.getTarget();

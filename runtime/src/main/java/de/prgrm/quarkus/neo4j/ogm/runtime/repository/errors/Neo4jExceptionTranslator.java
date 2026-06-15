@@ -4,6 +4,16 @@ import org.neo4j.driver.exceptions.ClientException;
 import org.neo4j.driver.exceptions.Neo4jException;
 import org.neo4j.driver.exceptions.TransientException;
 
+/**
+ * Translates Neo4j driver exceptions into the library's {@link RepositoryException} hierarchy.
+ *
+ * <p>
+ * The raw driver message can contain fragments of the executed Cypher and parameter values. To avoid
+ * leaking that into a response if the application surfaces {@link Throwable#getMessage()} to clients,
+ * the translated exception message only carries the operation context and the stable Neo4j error code.
+ * The full original exception (including the driver message) is preserved as the {@code cause} and is
+ * therefore still available in logs and stack traces.
+ */
 public final class Neo4jExceptionTranslator {
 
     private static final String CONSTRAINT_VALIDATION_FAILED = "Neo.ClientError.Schema.ConstraintValidationFailed";
@@ -31,12 +41,11 @@ public final class Neo4jExceptionTranslator {
 
         // Fallback: try to parse error code from message
         if (e.getMessage() != null && e.getMessage().contains("Neo.ClientError.")) {
-            String msg = e.getMessage();
-            String code = extractNeo4jCode(msg);
-            return translateFromCode(code, buildMessage(context, msg, code), e);
+            String code = extractNeo4jCode(e.getMessage());
+            return translateFromCode(code, buildMessage(context, code), e);
         }
 
-        return new RepositoryException(buildMessage(context, e.getMessage(), null), e);
+        return new RepositoryException(buildMessage(context, null), e);
     }
 
     private static Neo4jException extractNeo4jException(Throwable e) {
@@ -50,7 +59,7 @@ public final class Neo4jExceptionTranslator {
 
     private static RepositoryException translateFromNeo4jException(Neo4jException e, String context) {
         String code = safe(e.code());
-        String message = buildMessage(context, e.getMessage(), code);
+        String message = buildMessage(context, code);
 
         // Check if transient by class hierarchy (not instanceof)
         Class<?> exClass = e.getClass();
@@ -95,9 +104,11 @@ public final class Neo4jExceptionTranslator {
         return new RepositoryException(message, e);
     }
 
-    private static String buildMessage(String context, String message, String code) {
-        return (context == null ? "" : context + " -> ") + safe(message)
-                + (code == null ? "" : " (code=" + code + ")");
+    private static String buildMessage(String context, String code) {
+        // Intentionally omit the raw driver message (may contain Cypher/parameter values);
+        // it is retained on the exception cause for logging.
+        String base = (context == null || context.isBlank()) ? "Neo4j operation failed" : context;
+        return base + (code == null || code.isEmpty() ? "" : " (code=" + code + ")");
     }
 
     private static String extractNeo4jCode(String message) {

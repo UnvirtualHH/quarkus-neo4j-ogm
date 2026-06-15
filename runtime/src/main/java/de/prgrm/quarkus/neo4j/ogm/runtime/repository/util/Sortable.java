@@ -11,7 +11,10 @@ public record Sortable(List<Sort> orders) {
         if (orders == null || orders.isEmpty())
             return "";
         String clause = orders.stream()
-                .map(s -> nodeAlias + "." + s.property() + (s.ascending() ? " ASC" : " DESC"))
+                // ORDER BY fields cannot be parameterized and may originate from request input,
+                // so validate them against a strict allow-list to prevent Cypher injection.
+                .map(s -> nodeAlias + "." + CypherIdentifier.requireValidProperty(s.property())
+                        + (s.ascending() ? " ASC" : " DESC"))
                 .reduce((a, b) -> a + ", " + b)
                 .orElse("");
         return "ORDER BY " + clause;

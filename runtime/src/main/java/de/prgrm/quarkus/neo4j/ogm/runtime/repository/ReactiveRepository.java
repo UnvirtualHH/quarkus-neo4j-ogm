@@ -21,6 +21,7 @@ import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.EntityMapper;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.EntityWithRelations;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.ReactiveRelationLoader;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.RelationshipData;
+import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.CypherIdentifier;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Filter;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Pageable;
 import de.prgrm.quarkus.neo4j.ogm.runtime.repository.util.Paged;
@@ -79,7 +80,7 @@ public abstract class ReactiveRepository<T> {
             ReactiveRelationLoader<T> relationLoader,
             ReactiveRelationVisitor relationVisitor, ReactiveTransactionManager txManager) {
         this.driver = driver;
-        this.label = label;
+        this.label = CypherIdentifier.requireValidIdentifier(label);
         this.entityMapper = entityMapper;
         this.reactiveRegistry = reactiveRegistry;
         this.relationLoader = relationLoader;
@@ -781,9 +782,12 @@ public abstract class ReactiveRepository<T> {
 
                     return Multi.createFrom().iterable(relationshipTypes)
                             .onItem().transformToUniAndMerge(typeKey -> {
-                                String[] parts = typeKey.split("_");
-                                String relType = parts[0];
-                                String direction = parts[1];
+                                // Split from the right so relationship types containing underscores
+                                // (e.g. HAS_BOOK) are preserved – mirrors the imperative Repository.
+                                int lastUnderscore = typeKey.lastIndexOf("_");
+                                String relType = CypherIdentifier
+                                        .requireValidIdentifier(typeKey.substring(0, lastUnderscore));
+                                String direction = typeKey.substring(lastUnderscore + 1);
 
                                 String deleteQuery = switch (direction) {
                                     case "OUTGOING" ->
@@ -882,6 +886,9 @@ public abstract class ReactiveRepository<T> {
                                                 Map<String, Object> params = Map.of(
                                                         "from", fromId.toString(),
                                                         "to", toId.toString());
+
+                                                // Relationship type is concatenated into the query.
+                                                CypherIdentifier.requireValidIdentifier(rel.getType());
 
                                                 String query = switch (rel.getDirection()) {
                                                     case OUTGOING ->

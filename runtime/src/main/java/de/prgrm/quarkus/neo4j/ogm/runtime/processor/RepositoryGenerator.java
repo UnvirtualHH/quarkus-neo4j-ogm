@@ -2,7 +2,6 @@ package de.prgrm.quarkus.neo4j.ogm.runtime.processor;
 
 import java.io.IOException;
 import java.util.*;
-import java.util.regex.Pattern;
 
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.Modifier;
@@ -21,8 +20,6 @@ import com.palantir.javapoet.TypeSpec;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.Relationship;
 
 public class RepositoryGenerator {
-
-    private static final Pattern PARAM_PATTERN = Pattern.compile("\\$(\\w+)");
 
     public void generateRepository(
             String packageName,
@@ -109,14 +106,5 @@ public class RepositoryGenerator {
             processingEnv.getMessager().printMessage(javax.tools.Diagnostic.Kind.ERROR,
                     "Failed to generate repository: " + e.getMessage());
         }
-    }
-
-    private static boolean hasReturn(String cypher) {
-        return cypher.toUpperCase(Locale.ROOT).matches(".*\\bRETURN\\b.*");
-    }
-
-    private static boolean hasWriteClause(String cypher) {
-        return cypher.toUpperCase(Locale.ROOT)
-                .matches(".*\\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE)\\b.*");
     }
 }

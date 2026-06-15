@@ -53,11 +53,7 @@ final class QueryMethodFactory {
 
         ReturnType returnType = q.returnType();
 
-        boolean transactional = false;
-        try {
-            transactional = (boolean) Query.class.getMethod("transactional").invoke(q);
-        } catch (Exception ignored) {
-        }
+        boolean transactional = q.transactional();
 
         List<String> paramNames = extractParamNames(cypherQuery);
 
@@ -71,7 +67,9 @@ final class QueryMethodFactory {
 
         MethodSpec.Builder mb = MethodSpec.methodBuilder(methodName)
                 .addModifiers(Modifier.PUBLIC)
-                .addStatement("String query = $L", toTextBlock(cypherQuery));
+                // $S emits a properly escaped Java string literal, so a Cypher query containing
+                // quotes or backslashes cannot corrupt or inject into the generated source.
+                .addStatement("String query = $S", cypherQuery);
 
         for (String p : paramNames) {
             TypeName resolved = explicitTypes.getOrDefault(p, resolveParamType(entityType, p, env));
@@ -472,16 +470,16 @@ final class QueryMethodFactory {
     }
 
     static boolean hasReturn(String cypher) {
-        return cypher.toUpperCase(Locale.ROOT).matches(".*\\bRETURN\\b.*");
+        return stripStringLiterals(cypher).toUpperCase(Locale.ROOT).matches("(?s).*\\bRETURN\\b.*");
     }
 
     static boolean hasWriteClause(String cypher) {
-        return cypher.toUpperCase(Locale.ROOT)
-                .matches(".*\\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE)\\b.*");
+        return stripStringLiterals(cypher).toUpperCase(Locale.ROOT)
+                .matches("(?s).*\\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE)\\b.*");
     }
 
     static List<String> extractParamNames(String cypher) {
-        Matcher matcher = PARAM_PATTERN.matcher(cypher);
+        Matcher matcher = PARAM_PATTERN.matcher(stripStringLiterals(cypher));
         LinkedHashSet<String> seen = new LinkedHashSet<>();
         while (matcher.find()) {
             seen.add(matcher.group(1));
@@ -489,8 +487,38 @@ final class QueryMethodFactory {
         return new ArrayList<>(seen);
     }
 
-    private static String toTextBlock(String query) {
-        String clean = query.stripIndent().trim();
-        return "\"\"\"\n" + clean + "\"\"\"";
+    /**
+     * Replaces the contents of single- and double-quoted Cypher string literals with spaces so that
+     * keyword/parameter detection ({@link #hasReturn}, {@link #hasWriteClause}, {@link #extractParamNames})
+     * is not fooled by literals that contain words like {@code DELETE} or {@code $foo}. Length is
+     * preserved to keep the logic simple; only the characters inside literals are blanked out.
+     */
+    static String stripStringLiterals(String cypher) {
+        StringBuilder sb = new StringBuilder(cypher.length());
+        char quote = 0;
+        boolean escaped = false;
+        for (int i = 0; i < cypher.length(); i++) {
+            char c = cypher.charAt(i);
+            if (quote != 0) {
+                if (escaped) {
+                    escaped = false;
+                    sb.append(' ');
+                } else if (c == '\\') {
+                    escaped = true;
+                    sb.append(' ');
+                } else if (c == quote) {
+                    quote = 0;
+                    sb.append(c);
+                } else {
+                    sb.append(' ');
+                }
+            } else if (c == '\'' || c == '"') {
+                quote = c;
+                sb.append(c);
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 }

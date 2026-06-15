@@ -23,7 +23,9 @@ public class ReactiveTransactionManager {
         ReactiveSession session = driver.session(ReactiveSession.class);
         return Uni.createFrom().publisher(session.beginTransaction())
                 .map(tx -> new ReactiveTxContext(UUID.randomUUID(), session, tx, true))
-                .onFailure().invoke(err -> closeQuietly(session));
+                // close the session reactively on failure; a bare session.close() returns an
+                // unsubscribed Publisher and would never actually release the connection.
+                .onFailure().call(() -> closeQuietly(session));
     }
 
     public Uni<Void> commit(ReactiveTxContext ctx) {
@@ -46,11 +48,10 @@ public class ReactiveTransactionManager {
                 .replaceWithVoid();
     }
 
-    private void closeQuietly(ReactiveSession session) {
-        try {
-            session.close();
-        } catch (Throwable ignored) {
-        }
+    private Uni<Void> closeQuietly(ReactiveSession session) {
+        return Uni.createFrom().publisher(session.close())
+                .onFailure().recoverWithNull()
+                .replaceWithVoid();
     }
 
     // ----------------------------------------------------

@@ -75,7 +75,10 @@ public class Filter {
     public record Condition(String property, Operator op, Object... values) {
 
         String toCypher(String alias, AtomicInteger counter, Map<String, Object> params) {
-            String nodeProp = alias + "." + property;
+            // Property names cannot be parameterized in Cypher and may originate from request input,
+            // so validate them against a strict allow-list to prevent Cypher injection.
+            String safeProperty = CypherIdentifier.requireValidProperty(property);
+            String nodeProp = alias + "." + safeProperty;
 
             // Case-insensitive string operators
             boolean caseInsensitive = op == Operator.CONTAINS ||

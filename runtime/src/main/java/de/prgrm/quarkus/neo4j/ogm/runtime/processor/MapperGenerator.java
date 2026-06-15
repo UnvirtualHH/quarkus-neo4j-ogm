@@ -75,8 +75,12 @@ public class MapperGenerator {
                             ParameterizedTypeName.get(ClassName.get(Map.class), ClassName.get(String.class),
                                     ClassName.get(Object.class))),
                     "_rawValuesByEntity",
-                    Modifier.PRIVATE)
-                    .initializer("new $T<>()", java.util.IdentityHashMap.class)
+                    Modifier.PRIVATE, Modifier.FINAL)
+                    // The mapper is an @ApplicationScoped singleton shared across request threads,
+                    // so the staging map must be synchronized. Entries are removed again in
+                    // applyPostLoadConverters() to avoid retaining entity references (memory leak).
+                    .initializer("$T.synchronizedMap(new $T<>())",
+                            java.util.Collections.class, java.util.IdentityHashMap.class)
                     .build());
         }
 
@@ -424,6 +428,12 @@ public class MapperGenerator {
             }
         }
 
+        if (hasPostLoadConverters) {
+            // Release the staged raw values for this entity so the singleton mapper does not
+            // retain entity references indefinitely.
+            b.addStatement("_rawValuesByEntity.remove(entity)");
+        }
+
         // Only return the method if there are context-aware converters
         return hasPostLoadConverters ? b.build() : null;
     }
@@ -448,11 +458,6 @@ public class MapperGenerator {
             }
         }
         return false;
-    }
-
-    private boolean shouldFetchRelationship(Relationship rel) {
-        return rel.mode() == RelationshipMode.FETCH_ONLY
-                || rel.mode() == RelationshipMode.FETCH_AND_PERSIST;
     }
 
     private boolean shouldPersistRelationship(Relationship rel) {

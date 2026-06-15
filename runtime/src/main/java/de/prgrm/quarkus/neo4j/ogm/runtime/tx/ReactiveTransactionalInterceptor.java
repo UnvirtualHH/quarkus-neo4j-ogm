@@ -16,6 +16,9 @@ public class ReactiveTransactionalInterceptor {
     @Inject
     ReactiveTransactionManager txManager;
 
+    // NOTE: This interceptor opens a transaction around the returned Uni, but cannot propagate that
+    // transaction into the method body's repository calls (Mutiny has no thread-bound context). See
+    // ReactiveTransactional for the limitation and the recommended explicit-context pattern.
     @AroundInvoke
     @SuppressWarnings("unchecked")
     public Object around(InvocationContext ctx) throws Exception {
