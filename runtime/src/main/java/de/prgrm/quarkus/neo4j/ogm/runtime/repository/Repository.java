@@ -889,24 +889,26 @@ public abstract class Repository<T> {
 
         // First, delete all existing edges of every declared persistable relationship type so that
         // both updated and removed relationships are detached before we re-create the current ones.
+        // The delete is scoped to the target label so that relationships sharing a type but pointing
+        // to different node types (issue #60) are cleared independently.
         for (String typeKey : relationshipTypes) {
-            // Split from the right side to handle relationship types with underscores
-            int lastUnderscore = typeKey.lastIndexOf("_");
-            String relType = CypherIdentifier.requireValidIdentifier(typeKey.substring(0, lastUnderscore));
-            String direction = typeKey.substring(lastUnderscore + 1);
+            String[] parts = typeKey.split("\\|", 3);
+            String relType = CypherIdentifier.requireValidIdentifier(parts[0]);
+            String direction = parts[1];
+            String targetLabel = CypherIdentifier.requireValidIdentifier(parts[2]);
 
             String deleteQuery = switch (direction) {
                 case "OUTGOING" ->
-                    "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]->() DELETE r";
+                    "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]->(:" + targetLabel + ") DELETE r";
                 case "INCOMING" ->
-                    "MATCH (n:" + sourceLabel + " {id: $id})<-[r:" + relType + "]-() DELETE r";
+                    "MATCH (n:" + sourceLabel + " {id: $id})<-[r:" + relType + "]-(:" + targetLabel + ") DELETE r";
                 case "UNDIRECTED" ->
-                    "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]-() DELETE r";
+                    "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]-(:" + targetLabel + ") DELETE r";
                 case "BOTH" -> {
                     // Delete both directions
-                    tx.run("MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]->() DELETE r",
+                    tx.run("MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]->(:" + targetLabel + ") DELETE r",
                             Values.parameters("id", convertIdToString(fromId)));
-                    yield "MATCH (n:" + sourceLabel + " {id: $id})<-[r:" + relType + "]-() DELETE r";
+                    yield "MATCH (n:" + sourceLabel + " {id: $id})<-[r:" + relType + "]-(:" + targetLabel + ") DELETE r";
                 }
                 default -> null;
             };

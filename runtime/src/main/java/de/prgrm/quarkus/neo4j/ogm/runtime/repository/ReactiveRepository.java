@@ -785,23 +785,28 @@ public abstract class ReactiveRepository<T> {
                     // type so that both updated and removed relationships are detached.
                     return Multi.createFrom().iterable(relationshipTypes)
                             .onItem().transformToUniAndMerge(typeKey -> {
-                                // Split from the right so relationship types containing underscores
-                                // (e.g. HAS_BOOK) are preserved – mirrors the imperative Repository.
-                                int lastUnderscore = typeKey.lastIndexOf("_");
-                                String relType = CypherIdentifier
-                                        .requireValidIdentifier(typeKey.substring(0, lastUnderscore));
-                                String direction = typeKey.substring(lastUnderscore + 1);
+                                // Key format: type|DIRECTION|targetLabel. Scoping the delete to the
+                                // target label lets relationships sharing a type but pointing to
+                                // different node types be cleared independently (issue #60).
+                                String[] parts = typeKey.split("\\|", 3);
+                                String relType = CypherIdentifier.requireValidIdentifier(parts[0]);
+                                String direction = parts[1];
+                                String targetLabel = CypherIdentifier.requireValidIdentifier(parts[2]);
 
                                 String deleteQuery = switch (direction) {
                                     case "OUTGOING" ->
-                                        "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]->() DELETE r";
+                                        "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]->(:" + targetLabel
+                                                + ") DELETE r";
                                     case "INCOMING" ->
-                                        "MATCH (n:" + sourceLabel + " {id: $id})<-[r:" + relType + "]-() DELETE r";
+                                        "MATCH (n:" + sourceLabel + " {id: $id})<-[r:" + relType + "]-(:" + targetLabel
+                                                + ") DELETE r";
                                     case "UNDIRECTED" ->
-                                        "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]-() DELETE r";
+                                        "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]-(:" + targetLabel
+                                                + ") DELETE r";
                                     case "BOTH" ->
                                         // For BOTH direction, delete both outgoing and incoming relationships
-                                        "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]-() DELETE r";
+                                        "MATCH (n:" + sourceLabel + " {id: $id})-[r:" + relType + "]-(:" + targetLabel
+                                                + ") DELETE r";
                                     default -> null;
                                 };
 

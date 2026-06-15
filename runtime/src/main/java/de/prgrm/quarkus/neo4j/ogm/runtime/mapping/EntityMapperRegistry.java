@@ -22,4 +22,14 @@ public class EntityMapperRegistry {
         }
         return (EntityMapper<T>) mapper;
     }
+
+    /**
+     * Returns the mapper registered for the given type, or {@code null} if none is registered.
+     * Unlike {@link #get(Class)} this never throws – useful for best-effort lookups (e.g. extracting
+     * an id for cycle detection) where a missing mapper is tolerable.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> EntityMapper<T> find(Class<T> type) {
+        return (EntityMapper<T>) registry.get(type);
+    }
 }

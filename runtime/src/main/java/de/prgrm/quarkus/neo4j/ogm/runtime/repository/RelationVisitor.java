@@ -1,15 +1,15 @@
 package de.prgrm.quarkus.neo4j.ogm.runtime.repository;
 
-import java.lang.reflect.Field;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 
 import org.jboss.logging.Logger;
 
-import de.prgrm.quarkus.neo4j.ogm.runtime.enums.Direction;
-import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.Relationship;
+import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.EntityMapper;
+import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.EntityMapperRegistry;
 
 /**
  * Application-scoped visitor that manages entity relationship traversal using ThreadLocal.
@@ -26,19 +26,15 @@ public class RelationVisitor {
     private static final ThreadLocal<VisitorContext> CONTEXT = ThreadLocal.withInitial(VisitorContext::new);
 
     /**
-     * Cache for relationship metadata per entity class
-     */
-    private static final Map<Class<?>, List<RelationshipInfo>> RELATIONSHIP_CACHE = new ConcurrentHashMap<>();
-
-    /**
-     * Cache for ID field/method accessors per entity class (performance optimization)
-     */
-    private static final Map<Class<?>, IdAccessor> ID_ACCESSOR_CACHE = new ConcurrentHashMap<>();
-
-    /**
      * Default max depth (can be overridden per relation via @Relationship)
      */
     private static final int DEFAULT_MAX_DEPTH = 5;
+
+    /**
+     * Used to extract entity ids without reflection, via the generated mappers.
+     */
+    @Inject
+    EntityMapperRegistry mapperRegistry;
 
     /**
      * CDI constructor
@@ -95,26 +91,15 @@ public class RelationVisitor {
     }
 
     /**
-     * Check if a specific relationship should be loaded based on its depth annotation.
+     * Check if a specific relationship should be loaded based on its declared max depth.
+     * The {@code maxDepth} is supplied by the generated relation loader (known at compile time),
+     * so no runtime reflection is needed to read the {@code @Relationship} annotation.
      */
-    public boolean shouldLoadRelationship(Object entity, String fieldName, int currentDepth) {
-        List<RelationshipInfo> relationships = getRelationshipInfo(entity.getClass());
-
-        for (RelationshipInfo info : relationships) {
-            if (info.fieldName.equals(fieldName)) {
-                if (currentDepth >= info.maxDepth) {
-                    CONTEXT.get().stats.depthLimitHits++;
-                    if (CONTEXT.get().debug) {
-                        LOG.debugf("Skip loading relation %s.%s at depth %d (maxDepth=%d)",
-                                entity.getClass().getSimpleName(), fieldName, currentDepth, info.maxDepth);
-                    }
-                    return false;
-                }
-                return true;
-            }
+    public boolean shouldLoadRelationship(int currentDepth, int maxDepth) {
+        if (currentDepth >= maxDepth) {
+            CONTEXT.get().stats.depthLimitHits++;
+            return false;
         }
-
-        // No @Relationship -> allow
         return true;
     }
 
@@ -228,72 +213,20 @@ public class RelationVisitor {
 
     // ========================= Private Helper Methods =========================
 
+    @SuppressWarnings("unchecked")
     private Object extractEntityId(Object entity) {
-        if (entity == null)
+        if (entity == null) {
             return null;
-
-        try {
-            Class<?> clazz = entity.getClass();
-
-            // Use cached accessor for performance
-            IdAccessor accessor = ID_ACCESSOR_CACHE.computeIfAbsent(clazz, c -> {
-                // Try common ID field names
-                String[] idFieldNames = { "id", "ID", "_id", "entityId" };
-                for (String fieldName : idFieldNames) {
-                    try {
-                        Field field = c.getDeclaredField(fieldName);
-                        field.setAccessible(true);
-                        return field::get; // Cache field accessor
-                    } catch (NoSuchFieldException ignored) {
-                    }
-                }
-
-                // Try getId() method
-                try {
-                    var method = c.getMethod("getId");
-                    return method::invoke; // Cache method accessor
-                } catch (NoSuchMethodException ignored) {
-                }
-
-                // Return null accessor if no ID field/method found
-                return e -> null;
-            });
-
-            return accessor.extractId(entity);
-
-        } catch (Exception e) {
-            // ignore
         }
-
-        return null;
-    }
-
-    private static List<RelationshipInfo> getRelationshipInfo(Class<?> entityClass) {
-        return RELATIONSHIP_CACHE.computeIfAbsent(entityClass, clazz -> {
-            List<RelationshipInfo> relationships = new ArrayList<>();
-            for (Field field : clazz.getDeclaredFields()) {
-                Relationship rel = field.getAnnotation(Relationship.class);
-                if (rel != null) {
-                    relationships.add(new RelationshipInfo(
-                            field.getName(),
-                            rel.maxDepth(),
-                            rel.type(),
-                            rel.direction()));
-                }
-            }
-            return relationships;
-        });
+        // Resolve the id via the generated mapper (no reflection). Falls back to identity-based
+        // tracking when no mapper is registered for the type.
+        EntityMapper<Object> mapper = (mapperRegistry != null)
+                ? (EntityMapper<Object>) mapperRegistry.find((Class<Object>) entity.getClass())
+                : null;
+        return (mapper != null) ? mapper.getNodeId(entity) : null;
     }
 
     // ========================= Inner Classes =========================
-
-    /**
-     * Functional interface for cached ID access
-     */
-    @FunctionalInterface
-    private interface IdAccessor {
-        Object extractId(Object entity) throws Exception;
-    }
 
     private static class VisitorContext {
         final Set<Object> visitedIds = ConcurrentHashMap.newKeySet();
@@ -303,21 +236,6 @@ public class RelationVisitor {
         final Set<String> persistedEntities = ConcurrentHashMap.newKeySet();
         int maxDepth = DEFAULT_MAX_DEPTH;
         boolean debug = false;
-    }
-
-    private static class RelationshipInfo {
-        final String fieldName;
-        final int maxDepth;
-        final String type;
-        final Direction direction;
-
-        RelationshipInfo(String fieldName, int maxDepth, String type,
-                Direction direction) {
-            this.fieldName = fieldName;
-            this.maxDepth = maxDepth;
-            this.type = type;
-            this.direction = direction;
-        }
     }
 
     private static class IdentityWrapper {

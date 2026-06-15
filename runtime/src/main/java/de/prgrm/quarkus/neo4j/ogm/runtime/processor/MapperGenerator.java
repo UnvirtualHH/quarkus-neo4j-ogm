@@ -251,7 +251,10 @@ public class MapperGenerator {
             String getter = MapperUtil.resolveGetterName(field);
             String targetType = MapperUtil.getFieldType(field);
             boolean isCollection = MapperUtil.stripAnnotations(field.asType().toString()).startsWith("java.util.List");
-            String relKey = rel.type() + "_" + rel.direction().name();
+            // Key includes the target label so that multiple relationships sharing the same type but
+            // pointing to different node types (issue #60) are cleared independently. The '|'
+            // delimiter is safe because Cypher identifiers only contain [A-Za-z0-9_].
+            String relKey = rel.type() + "|" + rel.direction().name() + "|" + resolveTargetLabel(targetType, env);
 
             if (isCollection) {
                 b.beginControlFlow("if (entity.$L() != null)", getter)
@@ -274,6 +277,23 @@ public class MapperGenerator {
                 hasPersistableRelationships ? CodeBlock.of("_persistableKeys") : CodeBlock.of("$T.of()", Set.class));
 
         return b.build();
+    }
+
+    /**
+     * Resolves the Neo4j label of a relationship target type: the {@code @NodeEntity(label = ...)}
+     * value if present, otherwise the simple class name – mirroring {@code EntityMapperProcessor}.
+     */
+    private String resolveTargetLabel(String targetType, ProcessingEnvironment env) {
+        TypeElement te = env.getElementUtils().getTypeElement(targetType);
+        if (te != null) {
+            NodeEntity nodeEntity = te.getAnnotation(NodeEntity.class);
+            if (nodeEntity != null && !nodeEntity.label().isEmpty()) {
+                return nodeEntity.label();
+            }
+            return te.getSimpleName().toString();
+        }
+        int lastDot = targetType.lastIndexOf('.');
+        return (lastDot >= 0) ? targetType.substring(lastDot + 1) : targetType;
     }
 
     private CodeBlock buildRelationshipAddCode(
@@ -385,23 +405,39 @@ public class MapperGenerator {
             return b.build();
         }
 
-        b.beginControlFlow("switch (relationType)");
+        // Group by relationship type: multiple fields may share the same type but point to
+        // different target node types (issue #60). Within such a group we dispatch on the runtime
+        // type of relatedEntity via instanceof (no reflection).
+        Map<String, List<VariableElement>> byType = new java.util.LinkedHashMap<>();
         for (VariableElement field : relFields) {
-            Relationship rel = field.getAnnotation(Relationship.class);
-            String setter = MapperUtil.resolveSetterName(field);
-            String getter = MapperUtil.resolveGetterName(field);
-            boolean isCollection = MapperUtil.stripAnnotations(field.asType().toString()).startsWith("java.util.List");
-            String targetType = MapperUtil.getFieldType(field);
+            byType.computeIfAbsent(field.getAnnotation(Relationship.class).type(), k -> new java.util.ArrayList<>())
+                    .add(field);
+        }
 
-            b.beginControlFlow("case $S ->", rel.type());
-            if (isCollection) {
-                b.beginControlFlow("if (entity.$L() == null)", getter)
-                        .addStatement("entity.$L(new $T<>())", setter, java.util.ArrayList.class)
-                        .endControlFlow()
-                        .addStatement("entity.$L().add(($T) relatedEntity)", getter, ClassName.bestGuess(targetType));
+        b.beginControlFlow("switch (relationType)");
+        for (Map.Entry<String, List<VariableElement>> entry : byType.entrySet()) {
+            List<VariableElement> fields = entry.getValue();
+            b.beginControlFlow("case $S ->", entry.getKey());
+
+            if (fields.size() == 1) {
+                VariableElement field = fields.get(0);
+                ClassName targetClass = ClassName.bestGuess(MapperUtil.getFieldType(field));
+                emitRelationAssignment(b, field, CodeBlock.of("($T) relatedEntity", targetClass));
             } else {
-                b.addStatement("entity.$L(($T) relatedEntity)", setter, ClassName.bestGuess(targetType));
+                boolean firstBranch = true;
+                for (VariableElement field : fields) {
+                    ClassName targetClass = ClassName.bestGuess(MapperUtil.getFieldType(field));
+                    if (firstBranch) {
+                        b.beginControlFlow("if (relatedEntity instanceof $T related)", targetClass);
+                        firstBranch = false;
+                    } else {
+                        b.nextControlFlow("else if (relatedEntity instanceof $T related)", targetClass);
+                    }
+                    emitRelationAssignment(b, field, CodeBlock.of("related"));
+                }
+                b.endControlFlow();
             }
+
             b.addStatement("break");
             b.endControlFlow();
         }
@@ -409,6 +445,25 @@ public class MapperGenerator {
         b.endControlFlow();
 
         return b.build();
+    }
+
+    /**
+     * Emits the assignment of a related entity to its field, handling both collection and
+     * single-valued relationships. {@code relatedExpr} already evaluates to the correct target type.
+     */
+    private void emitRelationAssignment(MethodSpec.Builder b, VariableElement field, CodeBlock relatedExpr) {
+        String setter = MapperUtil.resolveSetterName(field);
+        String getter = MapperUtil.resolveGetterName(field);
+        boolean isCollection = MapperUtil.stripAnnotations(field.asType().toString()).startsWith("java.util.List");
+
+        if (isCollection) {
+            b.beginControlFlow("if (entity.$L() == null)", getter)
+                    .addStatement("entity.$L(new $T<>())", setter, java.util.ArrayList.class)
+                    .endControlFlow()
+                    .addStatement("entity.$L().add($L)", getter, relatedExpr);
+        } else {
+            b.addStatement("entity.$L($L)", setter, relatedExpr);
+        }
     }
 
     private MethodSpec generateRegisterSelfMethod(TypeElement entityType) {

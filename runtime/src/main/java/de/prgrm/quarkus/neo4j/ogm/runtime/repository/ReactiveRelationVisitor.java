@@ -1,13 +1,13 @@
 package de.prgrm.quarkus.neo4j.ogm.runtime.repository;
 
-import java.lang.reflect.Field;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 
-import de.prgrm.quarkus.neo4j.ogm.runtime.enums.Direction;
-import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.Relationship;
+import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.EntityMapper;
+import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.EntityMapperRegistry;
 import io.smallrye.mutiny.Uni;
 
 /**
@@ -17,9 +17,13 @@ import io.smallrye.mutiny.Uni;
 @ApplicationScoped
 public class ReactiveRelationVisitor {
 
-    private static final Map<Class<?>, List<RelationshipInfo>> RELATIONSHIP_CACHE = new ConcurrentHashMap<>();
-    private static final Map<Class<?>, IdAccessor> ID_ACCESSOR_CACHE = new ConcurrentHashMap<>();
     private static final int DEFAULT_MAX_DEPTH = 5;
+
+    /**
+     * Used to extract entity ids without reflection, via the generated mappers.
+     */
+    @Inject
+    EntityMapperRegistry mapperRegistry;
 
     public ReactiveRelationVisitor() {
     }
@@ -57,17 +61,14 @@ public class ReactiveRelationVisitor {
         return Uni.createFrom().item(true);
     }
 
-    public Uni<Boolean> shouldLoadRelationship(Object entity, String fieldName, int currentDepth, VisitorContext ctx) {
-        List<RelationshipInfo> relationships = getRelationshipInfo(entity.getClass());
-
-        for (RelationshipInfo info : relationships) {
-            if (info.fieldName.equals(fieldName)) {
-                if (currentDepth >= info.maxDepth) {
-                    ctx.stats.depthLimitHits++;
-                    return Uni.createFrom().item(false);
-                }
-                return Uni.createFrom().item(true);
-            }
+    /**
+     * The {@code maxDepth} is supplied by the generated relation loader (known at compile time),
+     * so no runtime reflection is needed to read the {@code @Relationship} annotation.
+     */
+    public Uni<Boolean> shouldLoadRelationship(int currentDepth, int maxDepth, VisitorContext ctx) {
+        if (currentDepth >= maxDepth) {
+            ctx.stats.depthLimitHits++;
+            return Uni.createFrom().item(false);
         }
         return Uni.createFrom().item(true);
     }
@@ -135,68 +136,17 @@ public class ReactiveRelationVisitor {
 
     // -------------------- Helpers --------------------
 
-    /**
-     * Functional interface for cached ID access
-     */
-    @FunctionalInterface
-    private interface IdAccessor {
-        Object extractId(Object entity) throws Exception;
-    }
-
+    @SuppressWarnings("unchecked")
     private Object extractEntityId(Object entity) {
-        if (entity == null)
+        if (entity == null) {
             return null;
-
-        try {
-            Class<?> clazz = entity.getClass();
-
-            // Use cached accessor for performance
-            IdAccessor accessor = ID_ACCESSOR_CACHE.computeIfAbsent(clazz, c -> {
-                // Try common ID field names
-                for (String fieldName : new String[] { "id", "ID", "_id", "entityId" }) {
-                    try {
-                        Field field = c.getDeclaredField(fieldName);
-                        field.setAccessible(true);
-                        return field::get; // Cache field accessor
-                    } catch (NoSuchFieldException ignored) {
-                    }
-                }
-
-                // Try getId() method
-                try {
-                    var method = c.getMethod("getId");
-                    return method::invoke; // Cache method accessor
-                } catch (NoSuchMethodException ignored) {
-                }
-
-                // Return null accessor if no ID field/method found
-                return e -> null;
-            });
-
-            return accessor.extractId(entity);
-
-        } catch (Exception e) {
-            // ignore
         }
-
-        return null;
-    }
-
-    private static List<RelationshipInfo> getRelationshipInfo(Class<?> entityClass) {
-        return RELATIONSHIP_CACHE.computeIfAbsent(entityClass, clazz -> {
-            List<RelationshipInfo> relationships = new ArrayList<>();
-            for (Field field : clazz.getDeclaredFields()) {
-                Relationship rel = field.getAnnotation(Relationship.class);
-                if (rel != null) {
-                    relationships.add(new RelationshipInfo(
-                            field.getName(),
-                            rel.maxDepth(),
-                            rel.type(),
-                            rel.direction()));
-                }
-            }
-            return relationships;
-        });
+        // Resolve the id via the generated mapper (no reflection). Falls back to identity-based
+        // tracking when no mapper is registered for the type.
+        EntityMapper<Object> mapper = (mapperRegistry != null)
+                ? (EntityMapper<Object>) mapperRegistry.find((Class<Object>) entity.getClass())
+                : null;
+        return (mapper != null) ? mapper.getNodeId(entity) : null;
     }
 
     // -------------------- Inner classes --------------------
@@ -215,21 +165,6 @@ public class ReactiveRelationVisitor {
 
         public VisitorStats getStats() {
             return stats.copy();
-        }
-    }
-
-    private static class RelationshipInfo {
-        final String fieldName;
-        final int maxDepth;
-        final String type;
-        final Direction direction;
-
-        RelationshipInfo(String fieldName, int maxDepth, String type,
-                Direction direction) {
-            this.fieldName = fieldName;
-            this.maxDepth = maxDepth;
-            this.type = type;
-            this.direction = direction;
         }
     }
 

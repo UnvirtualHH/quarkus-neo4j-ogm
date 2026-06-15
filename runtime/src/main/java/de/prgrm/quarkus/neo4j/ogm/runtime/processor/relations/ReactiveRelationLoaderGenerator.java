@@ -146,7 +146,6 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
         int idx = 1;
 
         for (VariableElement field : relationFields) {
-            final String fieldName = field.getSimpleName().toString();
             final String fieldType = MapperUtil.stripAnnotations(field.asType().toString());
             final boolean isList = types.isAssignable(field.asType(), types.erasure(listType));
             final String relatedType = isList
@@ -164,7 +163,7 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
 
             if (isList) {
                 block.addStatement(
-                        "$T $L = relationVisitor.shouldLoadRelationship(entity, $S, currentDepth, ctx)"
+                        "$T $L = relationVisitor.shouldLoadRelationship(currentDepth, $L, ctx)"
                                 + ".flatMap(shouldLoad -> shouldLoad"
                                 + " ? reactiveRegistry.getReactiveRepository($T.class).query($S, $T.of($S, id))"
                                 + "     .onItem().transformToUniAndMerge(item -> loadRelationRecursively(item, currentDepth + 1, ctx).map(loaded -> ($T) loaded))"
@@ -173,7 +172,7 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
                         ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
                                 ParameterizedTypeName.get(ClassName.get(List.class), ClassName.bestGuess(relatedType))),
                         uniVar,
-                        fieldName,
+                        relAnn.maxDepth(),
                         ClassName.bestGuess(relatedType),
                         query,
                         ClassName.get(Map.class), "id",
@@ -183,7 +182,7 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
                         ClassName.bestGuess(relatedType));
             } else {
                 block.addStatement(
-                        "$T $L = relationVisitor.shouldLoadRelationship(entity, $S, currentDepth, ctx)"
+                        "$T $L = relationVisitor.shouldLoadRelationship(currentDepth, $L, ctx)"
                                 + ".flatMap(shouldLoad -> {"
                                 + " if (!shouldLoad) return $T.createFrom().nullItem();"
                                 + " return reactiveRegistry.getReactiveRepository($T.class).querySingle($S, $T.of($S, id))"
@@ -194,7 +193,7 @@ public class ReactiveRelationLoaderGenerator extends AbstractRelationLoaderGener
                         ParameterizedTypeName.get(ClassName.get("io.smallrye.mutiny", "Uni"),
                                 ClassName.bestGuess(relatedType)),
                         uniVar,
-                        fieldName,
+                        relAnn.maxDepth(),
                         ClassName.get("io.smallrye.mutiny", "Uni"),
                         ClassName.bestGuess(relatedType),
                         query,

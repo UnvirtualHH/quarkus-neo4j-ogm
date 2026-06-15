@@ -136,7 +136,7 @@ public class ImperativeRelationLoaderGenerator extends AbstractRelationLoaderGen
             String query = buildQuery(sourceLabel, rel.direction(), rel.type(), relatedSimple);
 
             builder.addComment("Loading relation $L (max depth: $L)", fieldName, rel.maxDepth());
-            builder.beginControlFlow("if (!relationVisitor.shouldLoadRelationship(entity, $S, currentDepth))", fieldName);
+            builder.beginControlFlow("if (!relationVisitor.shouldLoadRelationship(currentDepth, $L))", rel.maxDepth());
             if (isList) {
                 builder.addStatement("entity.$L(new $T<>())", setter, ArrayList.class);
             } else {
