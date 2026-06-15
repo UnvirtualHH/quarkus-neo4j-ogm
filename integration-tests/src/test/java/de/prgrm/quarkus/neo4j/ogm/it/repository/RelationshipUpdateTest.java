@@ -87,9 +87,13 @@ class RelationshipUpdateTest {
         Person withFollowers = personRepository.findById(person.getId());
         assertEquals(2, withFollowers.getFollowing().size());
 
-        // Removing all relationships currently not supported via empty list
-        // This is a known limitation - empty lists don't provide metadata about which
-        // relationship types exist. Skip this portion of the test.
+        // Issue #69: emptying the collection must detach all edges.
+        person.setFollowing(List.of());
+        person = personRepository.update(person);
+
+        Person withoutFollowers = personRepository.findById(person.getId());
+        assertEquals(0, withoutFollowers.getFollowing().size(),
+                "Emptying the relationship collection must detach all edges (issue #69)");
     }
 
     @Test
@@ -144,8 +148,12 @@ class RelationshipUpdateTest {
         person.setFollowing(List.of(follower));
         person = personRepository.update(person);
 
-        // Removing relationships via null list is currently not supported
-        // This is a known limitation - null lists don't provide metadata about which
-        // relationship types exist. The relationships will persist after setting to null.
+        // A null collection means "leave unchanged" (distinct from an empty list, which clears).
+        person.setFollowing(null);
+        person = personRepository.update(person);
+
+        Person stillHasFollower = personRepository.findById(person.getId());
+        assertEquals(1, stillHasFollower.getFollowing().size(),
+                "A null relationship field must be left untouched, not detached");
     }
 }

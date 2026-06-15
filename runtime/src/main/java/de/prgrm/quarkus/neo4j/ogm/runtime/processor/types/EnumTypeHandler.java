@@ -23,7 +23,7 @@ public class EnumTypeHandler implements TypeHandler {
     @Override
     public CodeBlock generateSetterCode(VariableElement field, String targetVar, String valueSource) {
         Enumerated enumerated = field.getAnnotation(Enumerated.class);
-        ClassName enumType = ClassName.bestGuess(field.asType().toString());
+        ClassName enumType = ClassName.bestGuess(stripAnnotations(field.asType().toString()));
 
         if (enumerated.value() == EnumType.ORDINAL) {
             return CodeBlock.of(

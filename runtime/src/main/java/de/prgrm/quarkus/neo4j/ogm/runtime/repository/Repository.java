@@ -294,7 +294,8 @@ public abstract class Repository<T> {
                 String alias = resolveAlias(rec);
                 T saved = entityMapper.map(rec, alias);
 
-                persistRelationships(tx, label, id, data.getRelationships(), new HashSet<>());
+                persistRelationships(tx, label, id, data.getRelationships(), data.getPersistableRelationshipKeys(),
+                        new HashSet<>());
                 return saved;
             });
         } finally {
@@ -362,7 +363,8 @@ public abstract class Repository<T> {
                     String alias = resolveAlias(rec);
                     T saved = entityMapper.map(rec, alias);
 
-                    persistRelationships(tx, label, id, data.getRelationships(), new HashSet<>());
+                    persistRelationships(tx, label, id, data.getRelationships(), data.getPersistableRelationshipKeys(),
+                            new HashSet<>());
                     results.add(saved);
                 }
                 return results;
@@ -466,7 +468,8 @@ public abstract class Repository<T> {
         Record rec = result.next();
         T saved = entityMapper.map(rec, resolveAlias(rec));
 
-        persistRelationships(tx, label, id, entity.getRelationships(), new HashSet<>());
+        persistRelationships(tx, label, id, entity.getRelationships(), entity.getPersistableRelationshipKeys(),
+                new HashSet<>());
         return saved;
     }
 
@@ -492,7 +495,8 @@ public abstract class Repository<T> {
 
                 Record rec = result.next();
                 T updated = entityMapper.map(rec, resolveAlias(rec));
-                persistRelationships(tx, label, id, data.getRelationships(), new HashSet<>());
+                persistRelationships(tx, label, id, data.getRelationships(), data.getPersistableRelationshipKeys(),
+                        new HashSet<>());
                 return updated;
             });
         } finally {
@@ -529,7 +533,8 @@ public abstract class Repository<T> {
                 Record rec = result.next();
                 T merged = entityMapper.map(rec, resolveAlias(rec));
 
-                persistRelationships(tx, label, id, data.getRelationships(), new HashSet<>());
+                persistRelationships(tx, label, id, data.getRelationships(), data.getPersistableRelationshipKeys(),
+                        new HashSet<>());
                 return merged;
             });
         } finally {
@@ -861,9 +866,16 @@ public abstract class Repository<T> {
             String sourceLabel,
             Object fromId,
             List<RelationshipData> relationships,
+            Set<String> declaredKeys,
             Set<String> visited) {
 
-        if (fromId == null || relationships == null || relationships.isEmpty()) {
+        List<RelationshipData> rels = (relationships != null) ? relationships : List.of();
+        Set<String> relationshipTypes = (declaredKeys != null) ? declaredKeys : Set.of();
+
+        // Proceed when there is anything to persist OR any declared relationship type to clear.
+        // Clearing must run even when no relationships are present so that emptied relations are
+        // detached from the DB (issue #69).
+        if (fromId == null || (rels.isEmpty() && relationshipTypes.isEmpty())) {
             return;
         }
 
@@ -875,15 +887,8 @@ public abstract class Repository<T> {
             return;
         }
 
-        // First, delete all existing relationships of the types we're about to persist
-        // This ensures removed relationships are properly detached
-        Set<String> relationshipTypes = new HashSet<>();
-        for (RelationshipData rel : relationships) {
-            if (rel.getMode() != RelationshipMode.FETCH_ONLY) {
-                relationshipTypes.add(rel.getType() + "_" + rel.getDirection());
-            }
-        }
-
+        // First, delete all existing edges of every declared persistable relationship type so that
+        // both updated and removed relationships are detached before we re-create the current ones.
         for (String typeKey : relationshipTypes) {
             // Split from the right side to handle relationship types with underscores
             int lastUnderscore = typeKey.lastIndexOf("_");
@@ -911,7 +916,7 @@ public abstract class Repository<T> {
             }
         }
 
-        for (RelationshipData rel : relationships) {
+        for (RelationshipData rel : rels) {
 
             if (rel.getMode() == RelationshipMode.FETCH_ONLY) {
                 continue;

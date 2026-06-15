@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.*;
@@ -174,7 +175,7 @@ public class MapperGenerator {
             String fieldName = field.getSimpleName().toString();
             String setter = MapperUtil.resolveSetterName(field);
             String targetType = MapperUtil.getFieldType(field);
-            boolean isCollection = field.asType().toString().startsWith("java.util.List");
+            boolean isCollection = MapperUtil.stripAnnotations(field.asType().toString()).startsWith("java.util.List");
             ClassName targetClass = ClassName.bestGuess(targetType);
 
             b.beginControlFlow("if (!record.get($S).isNull())", fieldName);
@@ -230,6 +231,18 @@ public class MapperGenerator {
         }
 
         // Relationships
+        boolean hasPersistableRelationships = ElementFilter.fieldsIn(entityType.getEnclosedElements()).stream()
+                .map(f -> f.getAnnotation(Relationship.class))
+                .anyMatch(r -> r != null && shouldPersistRelationship(r));
+
+        if (hasPersistableRelationships) {
+            // Keys ("TYPE_DIRECTION") of relationship fields that are non-null on this instance.
+            // A non-null field (even an empty collection) means the relationship is "managed" and
+            // must be cleared before re-persisting, so emptying a collection detaches the existing
+            // edges (issue #69). A null field is left untouched.
+            b.addStatement("$T<String> _persistableKeys = new $T<>()", Set.class, java.util.HashSet.class);
+        }
+
         for (VariableElement field : ElementFilter.fieldsIn(entityType.getEnclosedElements())) {
             Relationship rel = field.getAnnotation(Relationship.class);
             if (rel == null || !shouldPersistRelationship(rel))
@@ -237,24 +250,28 @@ public class MapperGenerator {
 
             String getter = MapperUtil.resolveGetterName(field);
             String targetType = MapperUtil.getFieldType(field);
-            boolean isCollection = field.asType().toString().startsWith("java.util.List");
+            boolean isCollection = MapperUtil.stripAnnotations(field.asType().toString()).startsWith("java.util.List");
+            String relKey = rel.type() + "_" + rel.direction().name();
 
             if (isCollection) {
                 b.beginControlFlow("if (entity.$L() != null)", getter)
+                        .addStatement("_persistableKeys.add($S)", relKey)
                         .beginControlFlow("for (var related : entity.$L())", getter)
                         .addCode(buildRelationshipAddCode(rel, targetType, "related"))
                         .endControlFlow()
                         .endControlFlow();
             } else {
                 b.beginControlFlow("if (entity.$L() != null)", getter)
+                        .addStatement("_persistableKeys.add($S)", relKey)
                         .addCode(buildRelationshipAddCode(rel, targetType, "entity." + getter + "()"))
                         .endControlFlow();
             }
         }
 
-        b.addStatement("return new $T($T.class, properties, relationships)",
+        b.addStatement("return new $T($T.class, properties, relationships, $L)",
                 EntityWithRelations.class,
-                TypeName.get(entityType.asType()));
+                TypeName.get(entityType.asType()),
+                hasPersistableRelationships ? CodeBlock.of("_persistableKeys") : CodeBlock.of("$T.of()", Set.class));
 
         return b.build();
     }
@@ -313,7 +330,7 @@ public class MapperGenerator {
                 continue;
 
             String getter = MapperUtil.resolveGetterName(field);
-            String type = field.asType().toString();
+            String type = MapperUtil.stripAnnotations(field.asType().toString());
 
             MethodSpec.Builder b = MethodSpec.methodBuilder("getNodeId")
                     .addAnnotation(Override.class)
@@ -373,7 +390,7 @@ public class MapperGenerator {
             Relationship rel = field.getAnnotation(Relationship.class);
             String setter = MapperUtil.resolveSetterName(field);
             String getter = MapperUtil.resolveGetterName(field);
-            boolean isCollection = field.asType().toString().startsWith("java.util.List");
+            boolean isCollection = MapperUtil.stripAnnotations(field.asType().toString()).startsWith("java.util.List");
             String targetType = MapperUtil.getFieldType(field);
 
             b.beginControlFlow("case $S ->", rel.type());

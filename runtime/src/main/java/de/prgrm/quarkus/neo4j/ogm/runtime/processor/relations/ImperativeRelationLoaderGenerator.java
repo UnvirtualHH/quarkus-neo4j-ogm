@@ -18,6 +18,7 @@ import com.palantir.javapoet.*;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.NodeEntity;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.RelationLoader;
 import de.prgrm.quarkus.neo4j.ogm.runtime.mapping.Relationship;
+import de.prgrm.quarkus.neo4j.ogm.runtime.processor.util.MapperUtil;
 
 public class ImperativeRelationLoaderGenerator extends AbstractRelationLoaderGenerator {
 
@@ -123,7 +124,7 @@ public class ImperativeRelationLoaderGenerator extends AbstractRelationLoaderGen
             String fieldName = field.getSimpleName().toString();
             String getter = resolveGetterName(field);
             String setter = resolveSetterName(field);
-            String fieldType = field.asType().toString();
+            String fieldType = MapperUtil.stripAnnotations(field.asType().toString());
             boolean isList = types.isAssignable(field.asType(), types.erasure(listType));
             String relatedType = isList
                     ? fieldType.substring(fieldType.indexOf('<') + 1, fieldType.lastIndexOf('>'))

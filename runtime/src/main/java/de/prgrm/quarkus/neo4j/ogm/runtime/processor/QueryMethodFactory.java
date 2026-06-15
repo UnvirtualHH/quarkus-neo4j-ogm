@@ -264,7 +264,8 @@ final class QueryMethodFactory {
     }
 
     private static CodeBlock generateValueExtraction(String columnName, TypeMirror type) {
-        String fqcn = type.toString();
+        // Strip type-use annotations (e.g. @NotNull) so record/DTO component types resolve cleanly.
+        String fqcn = MapperUtil.stripAnnotations(type.toString());
 
         // Primitives — no null check needed
         if (type.getKind().isPrimitive()) {

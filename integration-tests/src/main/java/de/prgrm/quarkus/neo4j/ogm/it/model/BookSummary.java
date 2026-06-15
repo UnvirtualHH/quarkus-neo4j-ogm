@@ -1,4 +1,5 @@
 package de.prgrm.quarkus.neo4j.ogm.it.model;
 
-public record BookSummary(String title, boolean active) {
+// @TypeUseMarker on a record component reproduces issue #61 for query projections.
+public record BookSummary(@TypeUseMarker String title, boolean active) {
 }

@@ -1,7 +1,6 @@
 package de.prgrm.quarkus.neo4j.ogm.runtime.repository;
 
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -218,7 +217,8 @@ public abstract class ReactiveRepository<T> {
 
         return runWriteQuerySingle(null, "CREATE (n:" + label + " $props) RETURN n",
                 Map.of("props", data.getProperties()))
-                .flatMap(saved -> persistRelationships(null, label, id, data.getRelationships()).replaceWith(saved));
+                .flatMap(saved -> persistRelationships(null, label, id, data.getRelationships(),
+                        data.getPersistableRelationshipKeys()).replaceWith(saved));
     }
 
     /**
@@ -326,7 +326,8 @@ public abstract class ReactiveRepository<T> {
 
         return runWriteQuerySingle(null, "MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n",
                 Map.of("id", id, "props", data.getProperties()))
-                .flatMap(updated -> persistRelationships(null, label, id, data.getRelationships()).replaceWith(updated));
+                .flatMap(updated -> persistRelationships(null, label, id, data.getRelationships(),
+                        data.getPersistableRelationshipKeys()).replaceWith(updated));
     }
 
     public Uni<T> merge(T entity) {
@@ -336,7 +337,8 @@ public abstract class ReactiveRepository<T> {
 
         return runWriteQuerySingle(null, "MERGE (n:" + label + " {id: $id}) SET n += $props RETURN n",
                 Map.of("id", id, "props", data.getProperties()))
-                .flatMap(merged -> persistRelationships(null, label, id, data.getRelationships()).replaceWith(merged));
+                .flatMap(merged -> persistRelationships(null, label, id, data.getRelationships(),
+                        data.getPersistableRelationshipKeys()).replaceWith(merged));
     }
 
     public Uni<Void> delete(T entity) {
@@ -524,7 +526,8 @@ public abstract class ReactiveRepository<T> {
 
         return runWriteQuerySingle(ctx, "CREATE (n:" + label + " $props) RETURN n",
                 Map.of("props", data.getProperties()))
-                .flatMap(saved -> persistRelationships(ctx, label, id, data.getRelationships()).replaceWith(saved));
+                .flatMap(saved -> persistRelationships(ctx, label, id, data.getRelationships(),
+                        data.getPersistableRelationshipKeys()).replaceWith(saved));
     }
 
     public Uni<T> update(ReactiveTxContext ctx, T entity) {
@@ -534,7 +537,8 @@ public abstract class ReactiveRepository<T> {
 
         return runWriteQuerySingle(ctx, "MATCH (n:" + label + " {id: $id}) SET n += $props RETURN n",
                 Map.of("id", id, "props", data.getProperties()))
-                .flatMap(updated -> persistRelationships(ctx, label, id, data.getRelationships()).replaceWith(updated));
+                .flatMap(updated -> persistRelationships(ctx, label, id, data.getRelationships(),
+                        data.getPersistableRelationshipKeys()).replaceWith(updated));
     }
 
     public Uni<T> merge(ReactiveTxContext ctx, T entity) {
@@ -544,7 +548,8 @@ public abstract class ReactiveRepository<T> {
 
         return runWriteQuerySingle(ctx, "MERGE (n:" + label + " {id: $id}) SET n += $props RETURN n",
                 Map.of("id", id, "props", data.getProperties()))
-                .flatMap(merged -> persistRelationships(ctx, label, id, data.getRelationships()).replaceWith(merged));
+                .flatMap(merged -> persistRelationships(ctx, label, id, data.getRelationships(),
+                        data.getPersistableRelationshipKeys()).replaceWith(merged));
     }
 
     public Uni<Void> delete(ReactiveTxContext ctx, T entity) {
@@ -755,8 +760,13 @@ public abstract class ReactiveRepository<T> {
     // ----------------------------------------------------------
 
     private Uni<Void> persistRelationships(ReactiveTxContext ctx, String sourceLabel, Object fromId,
-            List<RelationshipData> relationships) {
-        if (fromId == null || relationships == null || relationships.isEmpty()) {
+            List<RelationshipData> relationships, Set<String> declaredKeys) {
+        final List<RelationshipData> rels = (relationships != null) ? relationships : List.of();
+        final Set<String> relationshipTypes = (declaredKeys != null) ? declaredKeys : Set.of();
+
+        // Proceed when there is anything to persist OR any declared relationship type to clear, so
+        // that emptied relations are detached from the DB (issue #69).
+        if (fromId == null || (rels.isEmpty() && relationshipTypes.isEmpty())) {
             return Uni.createFrom().voidItem();
         }
 
@@ -771,15 +781,8 @@ public abstract class ReactiveRepository<T> {
                         return Uni.createFrom().voidItem();
                     }
 
-                    // First, delete all existing relationships of the types we're about to persist
-                    // This ensures removed relationships are properly detached
-                    Set<String> relationshipTypes = new HashSet<>();
-                    for (RelationshipData rel : relationships) {
-                        if (rel.getMode() != de.prgrm.quarkus.neo4j.ogm.runtime.enums.RelationshipMode.FETCH_ONLY) {
-                            relationshipTypes.add(rel.getType() + "_" + rel.getDirection());
-                        }
-                    }
-
+                    // First, delete all existing edges of every declared persistable relationship
+                    // type so that both updated and removed relationships are detached.
                     return Multi.createFrom().iterable(relationshipTypes)
                             .onItem().transformToUniAndMerge(typeKey -> {
                                 // Split from the right so relationship types containing underscores
@@ -809,7 +812,7 @@ public abstract class ReactiveRepository<T> {
                                 }
                             })
                             .collect().asList()
-                            .flatMap(ignore -> Multi.createFrom().iterable(relationships)
+                            .flatMap(ignore -> Multi.createFrom().iterable(rels)
                                     .onItem().transformToUniAndMerge(rel -> {
                                         if (rel.getMode() == de.prgrm.quarkus.neo4j.ogm.runtime.enums.RelationshipMode.FETCH_ONLY) {
                                             return Uni.createFrom().voidItem();
@@ -861,7 +864,7 @@ public abstract class ReactiveRepository<T> {
                                         }
                                     })
                                     .collect().asList()
-                                    .flatMap(ignored -> Multi.createFrom().iterable(relationships)
+                                    .flatMap(ignored -> Multi.createFrom().iterable(rels)
                                             .onItem().transformToUniAndMerge(rel -> {
                                                 Object toId = rel.getTargetId();
                                                 if (toId == null) {
@@ -918,10 +921,6 @@ public abstract class ReactiveRepository<T> {
                 });
     }
 
-    private Uni<Void> persistRelationships(String sourceLabel, Object fromId, List<RelationshipData> relationships) {
-        return persistRelationships(null, sourceLabel, fromId, relationships);
-    }
-
     private Uni<T> createInternal(ReactiveTxContext ctx, EntityWithRelations entity) {
         resetVisitor();
 
@@ -933,7 +932,8 @@ public abstract class ReactiveRepository<T> {
                 .flatMap(saved -> persistRelationships(ctx,
                         label,
                         entityMapper.getNodeId(saved),
-                        entity.getRelationships())
+                        entity.getRelationships(),
+                        entity.getPersistableRelationshipKeys())
                         .replaceWith(saved));
     }
 

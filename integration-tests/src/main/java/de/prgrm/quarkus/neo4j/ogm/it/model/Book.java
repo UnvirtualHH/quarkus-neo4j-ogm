@@ -35,11 +35,14 @@ public class Book {
     private UUID id;
     private String title;
 
+    // @TypeUseMarker reproduces issue #61: a TYPE_USE annotation on a relationship field must not
+    // break code generation (single-valued and collection-valued).
     @Relationship(type = "WROTE", direction = Direction.INCOMING, mode = RelationshipMode.FETCH_AND_PERSIST)
+    @TypeUseMarker
     private Author author;
 
     @Relationship(type = "RELATED_TO", direction = Direction.OUTGOING, mode = RelationshipMode.DESIGN_ONLY)
-    private List<Book> relatedBooks;
+    private List<@TypeUseMarker Book> relatedBooks;
 
     @Property(name = "active")
     private boolean active;
